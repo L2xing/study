@@ -83,6 +83,29 @@ CAP
 	* Lab中需要学习如何管理并发性
 	* 学习RPC的调用逻辑
 ******
-## Paper阅读（mapreduce）
+## Paper阅读（mapreduce） 6.033
+系统背景： mulit-hours and TB data
+目标: 让非专业人士简单地编写分布式应用。
+解决方法：1. mapreduce（函数式顺序框架）2. MR deal with distribution （合并分布式的请求和结果）
+> map-reduce是一种非通用的代码框架，他会要求所以想使用这个框架系统按照这个逻辑进行编排。
 
+例如抽象图： 从f1,f2,f3统计单词频率
+f1 ---map---> (a,1)		(b,1)  				 
+f2 ---map---> 			(b,1)                
+f3 ---map---> (a,3)					(c,1)    
+							|           |          |
+						reduce.   |		   |
+							|		reduce.   |
+							|			|       reduce
+							|           |          |
+						(a,4)	     (b,2)     (c,1)
+						
+map的过程服务器之前不需要通信，reduce时需要进行通信。
 
+mapreduce中最昂贵的部分是中间数据。（_感觉没有讲明白，昂贵的是因为存储还是通信或事其他的_）
+![Enter-image-description](./imgs/d0ed1b16-713a-470c-9024-172ccb3f576c.png)
+
+框架
+![Enter-image-description](./imgs/b9990245-da74-4918-b30b-ba8bd43e20aa.png)
+论文中文件的存储是位于GFS(google的分布式文件存储系统)。 
+(6)write通过网络写入GFS
