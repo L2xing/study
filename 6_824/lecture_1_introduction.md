@@ -91,9 +91,9 @@ CAP
 
 例如抽象图： 从f1,f2,f3统计单词频率
 f1 ---map---> (a,1)		(b,1)  				 
-f2 ---map---> 			(b,1)               
+f2 ---map---> 			(b,1)                
 f3 ---map---> (a,3)					(c,1)    
-							|           |          |
+                            |           |          |
 						reduce.   |		   |
 							|		reduce.   |
 							|			|       reduce
@@ -103,10 +103,10 @@ f3 ---map---> (a,3)					(c,1)
 map的过程服务器之前不需要通信，reduce时需要进行通信。
 
 mapreduce中最昂贵的部分是中间数据。（_感觉没有讲明白，昂贵的是因为存储还是通信或事其他的_）
-![Enter-image-description](/imgs/2024-12-24/hkeLIK1c8BcbVVtP.png)
+![Enter-image-description](./imgs/d0ed1b16-713a-470c-9024-172ccb3f576c.png)
 
 框架
-![Enter-image-description](/imgs/2024-12-24/uz3cwmge931VGpiy.png)
+![Enter-image-description](./imgs/b9990245-da74-4918-b30b-ba8bd43e20aa.png)
 论文中文件的存储是位于GFS(google的分布式文件存储系统)。 
 (6)write通过网络写入GFS
 
@@ -122,10 +122,10 @@ if worker fail, then master restart task.
  
  Other failures
  1. 协调器（master）会失败吗？会失败但是不能允许。
-在当前的架构(map reduce)中,如果协调器异常，通常需要重新执行整个mapreduce任务。
+在当前的架构(map reduce)中,如果协调器异常，通常 需要重新执行整个mapreduce任务。
 所以解决方案就是master节点的物理主机安全性最高。
  
  2.  Slow Worker(straggler) 落后节点？
  让同一个任务由多个worker进行，取最快的worker即可。
-
-***
+ 
+> 思考mapreduce的异常case. work fail, slow worker,  master broken等等，每一个case都需要关注。
