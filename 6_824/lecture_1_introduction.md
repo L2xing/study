@@ -91,7 +91,7 @@ CAP
 
 例如抽象图： 从f1,f2,f3统计单词频率
 f1 ---map---> (a,1)		(b,1)  				 
-f2 ---map---> 			(b,1)                
+f2 ---map---> 			(b,1)               
 f3 ---map---> (a,3)					(c,1)    
 							|           |          |
 						reduce.   |		   |
@@ -103,20 +103,29 @@ f3 ---map---> (a,3)					(c,1)
 map的过程服务器之前不需要通信，reduce时需要进行通信。
 
 mapreduce中最昂贵的部分是中间数据。（_感觉没有讲明白，昂贵的是因为存储还是通信或事其他的_）
-![Enter-image-description](./imgs/d0ed1b16-713a-470c-9024-172ccb3f576c.png)
+![Enter-image-description](/imgs/2024-12-24/hkeLIK1c8BcbVVtP.png)
 
 框架
-![Enter-image-description](./imgs/b9990245-da74-4918-b30b-ba8bd43e20aa.png)
+![Enter-image-description](/imgs/2024-12-24/uz3cwmge931VGpiy.png)
 论文中文件的存储是位于GFS(google的分布式文件存储系统)。 
 (6)write通过网络写入GFS
 
 ****
+
 # Fault tolerance (容错)
- 
 if worker fail, then master restart task.
 1. 重启成功
 2. 重启失败
 问题：同一个map逻辑为了容错可以重复执行？
-一种是map-worker异常没有执行成功，另一种是map-worker因为网络问题没有返回，但是其实已经执行完成了。
+一种是map-worker异常没有执行成功，另一种是map-worker因为网络问题没有返回，但是其实已经执行完成了，这种场景是mapreduce是会常见的。
+因此需要保证map/reduce是函数式编程接口，无状态，稳定，相同的输入无论调用几次，无论什么时候调用结果都要是一样的。
+ 
+ Other failures
+ 1. 协调器（master）会失败吗？会失败但是不能允许。
+在当前的架构(map reduce)中,如果协调器异常，通常需要重新执行整个mapreduce任务。
+所以解决方案就是master节点的物理主机安全性最高。
+ 
+ 2.  Slow Worker(straggler) 落后节点？
+ 让同一个任务由多个worker进行，取最快的worker即可。
 
-mapreduce是一种函数式状态接口，所以武装题啊
+***
