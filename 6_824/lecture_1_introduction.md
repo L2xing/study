@@ -109,3 +109,14 @@ mapreduce中最昂贵的部分是中间数据。（_感觉没有讲明白，昂�
 ![Enter-image-description](./imgs/b9990245-da74-4918-b30b-ba8bd43e20aa.png)
 论文中文件的存储是位于GFS(google的分布式文件存储系统)。 
 (6)write通过网络写入GFS
+
+****
+# Fault tolerance (容错)
+ 
+if worker fail, then master restart task.
+1. 重启成功
+2. 重启失败
+问题：同一个map逻辑为了容错可以重复执行？
+一种是map-worker异常没有执行成功，另一种是map-worker因为网络问题没有返回，但是其实已经执行完成了。
+
+mapreduce是一种函数式状态接口，所以武装题啊
