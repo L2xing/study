@@ -103,8 +103,32 @@ golang.org/
 # RPC （remote procedure call）
 RPC VS PC
 
+RPC例子：
+client,  执行方
+PUT,     执行方法
+args,    入参
+reply,   出参 （可能会有个error）
+client.call("PUT", &args, &reply)
+
+******
+RPC的异常case（确保完成一次c/s交互）,使得它和PC有很大的不一样。
+1. at-least-once(至少一次)，可能会被多次调用。
+客户端重试实现。用的比较少
+
+2. at-most-once(最多一次) 
+通过过滤重复实现（duplicate）,服务器需要支持。
+RPC使用最多的。
+golang的rpc默认是这个case。
+
+3. exactly-once (正好一次)
+比较难。Lab3的时候需要实现。
 
 
+*******
+# 总结
+这个单元讲了一下golang的携程和rpc这两个在lab中需要用到的内容。
+但是都是入门级别的如果已经有了golang的开发经验其实是可以不用看的。
+贴近实现而非理论。
 
  
 
