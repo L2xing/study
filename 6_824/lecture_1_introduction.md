@@ -110,6 +110,13 @@ mapreduce中最昂贵的部分是中间数据。（_感觉没有讲明白，昂�
 论文中文件的存储是位于GFS(google的分布式文件存储系统)。 
 (6)write通过网络写入GFS
 
+> 论文中的对mapreduce逻辑抽象
+> 
+> map     (k1,v1)        ->  list(k2,v2)
+> 
+> reduce  (k2,list(v2))  ->  list(v2)
+>
+
 ****
 
 # Fault tolerance (容错)
@@ -127,5 +134,18 @@ if worker fail, then master restart task.
  
  2.  Slow Worker(straggler) 落后节点？
  让同一个任务由多个worker进行，取最快的worker即可。
- 
+
 > 思考mapreduce的异常case. work fail, slow worker,  master broken等等，每一个case都需要关注。
+
+****
+### 1. master fail
+感觉对对于需要持久运行的service来说有点不友好
+>
+> 论文原话
+> 如果master故障，则终止MapReduce计算。client可以检测到该状态，如果有需要可以重试MapReduce操作。
+>
+> 
+>therefore our current implementation aborts the MapReduce computation
+> if the master fails. Clients can check for this condition
+> and retry the MapReduce operation if they desire.
+> 

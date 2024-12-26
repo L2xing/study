@@ -39,7 +39,17 @@
 ## 3. GFS讲述
 GFS论文的理论在当时是被认为容易理解，但是最终理论的落地和1000台以上的机器实践却很少。因为这里面有些非标准的设计，缺乏规范化的描述，阻碍其落地困难。
 * 单master节点。无容错。
-构建分布式文件系统，却存在单点问题 
+构建分布式文件系统，却存在单点问题.
+>
+> 论文原话
+> 如果master故障，则终止MapReduce计算。client可以检测到该状态，如果有需要可以重试MapReduce操作。
+>
+> 
+>therefore our current implementation aborts the MapReduce computation
+> if the master fails. Clients can check for this condition
+> and retry the MapReduce operation if they desire.
+> 
+
 * 存在不一致行为。
 没有做到完全的强一致性 
 
