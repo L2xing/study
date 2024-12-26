@@ -62,6 +62,15 @@ GFS令老师惊讶的几个特点：
 3. 对外提供全局一致性。 （对所有客户端的行为一致 ）
 4. 容错能力。 
 
+## 一致性
+GFS为了防止chunkserver出现脑裂，通过租约的方式保证同一时间内只能存在一个primary chunkserver。但是缺点在于短时间内，如果primary对于master不可达的话，该chunk就无法进行write操作，直到租约结束。
+租约在write的期间.master可以通过hreatbeat进行续约。
+
+## 课后作业
+1. 了解write流程，画出流程图
+2. 了解read流程，画出流程图
+3. 了解GFS的一致性模型，画出流程图
+
 
 
 
