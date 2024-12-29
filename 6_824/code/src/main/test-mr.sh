@@ -33,19 +33,21 @@ failed_any=0
 #########################################################
 # first word-count
 
-# generate the correct output
+# generate the correct output （通过串形方式计算稳定结果最为对照组）
 ../mrsequential ../../mrapps/wc.so ../pg*txt || exit 1
 sort mr-out-0 > mr-correct-wc.txt
 rm -f mr-out*
 
 echo '***' Starting wc test.
 
+# 启动协调者，存储任务信息（pg*txt）
 timeout -k 2s 180s ../mrcoordinator ../pg*txt &
 pid=$!
 
 # give the coordinator time to create the sockets.
 sleep 1
 
+# 启动三个Worker座位Mapper和Reducer的资源。
 # start multiple workers.
 timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
 timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
@@ -54,6 +56,7 @@ timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
 # wait for the coordinator to exit.
 wait $pid
 
+# 结果校验
 # since workers are required to exit when a job is completely finished,
 # and not before, that means the job has finished.
 sort mr-out* | grep . > mr-wc-all
