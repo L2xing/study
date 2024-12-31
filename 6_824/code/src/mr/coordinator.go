@@ -3,19 +3,25 @@ package mr
 import (
 	"fmt"
 	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	// "os"
 	"strings"
 	"sync"
 	"time"
 )
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
 
 type Coordinator struct {
 	// Your definitions here.
-	mappers  map[string]string
-	reducers map[string]string
+
+	// mapper
+	mapperLock    sync.Mutex
+	mappers       map[string]bool
+	mapperShuffle map[string][]string
+
+	// ReducerKey
+	reducers map[string]bool
 
 	// all
 	mutexWork       sync.Mutex
@@ -23,17 +29,11 @@ type Coordinator struct {
 	processingWorks []WorkerInfo
 }
 
-type WorkerInfo struct {
-	Addr  string
-	State int
-}
-
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 	c.mutexWork.Lock()
 	defer c.mutexWork.Unlock()
-
-	workerAddr := args.addr
+	workerAddr := args.Addr
 
 	hasWorker := false
 	for _, worker := range c.idelWorks {
@@ -52,11 +52,81 @@ func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 	}
 
 	if hasWorker {
+		reply.Success = true
 		return nil
 	}
 
-	c.idelWorks = append(c.idelWorks, WorkerInfo{Addr: args.addr, State: 0})
+	c.idelWorks = append(c.idelWorks, WorkerInfo{Addr: args.Addr, State: 0})
+	reply.Success = true
 	return nil
+}
+
+func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
+	c.mapperLock.Lock()
+	defer c.mapperLock.Unlock()
+	// 1. 如果 fileName已经处理过直接跳过
+	done, ok := c.mappers[args.FileName]
+	if ok && done {
+		reply.Success = true
+		return nil
+	}
+
+	// 2. 合并fileName的shuffle
+	c.mappers[args.FileName] = true
+	for k, v := range args.Shuffles {
+		shuffles, ok := c.mapperShuffle[k]
+		if !ok {
+			shuffles = make([]string, 1)
+			c.mapperShuffle[k] = shuffles
+		}
+		c.mapperShuffle[k] = append(shuffles, v...)
+		c.mappers[k] = true
+	}
+
+	// 3. 释放一个worker
+	c.releaseWorker(args.Addr)
+	return nil
+}
+
+func (c *Coordinator) releaseWorker(addr string) {
+	c.mutexWork.Lock()
+	defer c.mutexWork.Unlock()
+
+	// 1. 释放一个worker
+	delIdx := -1
+	var workerInfo WorkerInfo
+	for idx, worker := range c.processingWorks {
+		if strings.Compare(worker.Addr, addr) == 0 {
+			delIdx = idx
+			workerInfo = worker
+			break
+		}
+	}
+	if delIdx == -1 {
+		return
+	}
+
+	// 2. 恢复一个worker
+	c.processingWorks = append(c.processingWorks[:delIdx], c.processingWorks[delIdx+1:]...)
+	c.idelWorks = append(c.idelWorks, workerInfo)
+}
+
+func (c *Coordinator) applyWorker() string {
+	c.mutexWork.Lock()
+	defer c.mutexWork.Unlock()
+	fmt.Println("申请worker...")
+	if len(c.idelWorks) == 0 {
+		fmt.Println("当前没有空闲worker...")
+		return ""
+	}
+	idx := 0
+	workerInfo := c.idelWorks[idx]
+
+	c.processingWorks = append(c.processingWorks, workerInfo)
+	c.idelWorks = c.idelWorks[idx+1:]
+
+	fmt.Println("申请到worker... addr:", workerInfo.Addr)
+	return workerInfo.Addr
 }
 
 // an example RPC handler.
@@ -71,10 +141,10 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
-	sockname := coordinatorSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
+	l, e := net.Listen("tcp", ":1234")
+	// sockname := coordinatorSock()
+	// os.Remove(sockname)
+	// l, e := net.Listen("unix", sockname)
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
@@ -93,28 +163,148 @@ func (c *Coordinator) Done() bool {
 
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
-// nReduce is the number of reduce tasks to use.
+// nReduce is the number of ReducerKey tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
-	c.mappers = make(map[string]string)
-	c.reducers = make(map[string]string)
+	c.mappers = make(map[string]bool)
+	c.mapperShuffle = make(map[string][]string)
+
+	c.reducers = make(map[string]bool)
 	c.idelWorks = make([]WorkerInfo, 0)
 	c.processingWorks = make([]WorkerInfo, 0)
 
 	// Your code here.
+	// 1. 定期检测
 	go func() {
 		for {
+			idelCnt := 0
 			for _, worker := range c.idelWorks {
 				fmt.Printf("worker addr:%s\n", worker.Addr)
+				idelCnt++
 			}
+			processingCnt := 0
 			for _, worker := range c.processingWorks {
 				fmt.Printf("worker addr:%s\n", worker.Addr)
+				processingCnt++
 			}
-			fmt.Printf("worker count:%d\n", len(c.idelWorks)+len(c.processingWorks))
+			totalCnt := idelCnt + processingCnt
+			fmt.Printf("worker count:%d, idelcnt:%d, processingCnt:%d\n", totalCnt, idelCnt, processingCnt)
 			time.Sleep(1 * time.Second)
 		}
 	}()
 
+	// 2. Task分配
+	for _, fileName := range files {
+		c.mappers[fileName] = false
+	}
+
+	go func() {
+		fmt.Println("task begin")
+
+		// 1. map分配
+		for {
+			boolAllDone := true
+			for fileName, done := range c.mappers {
+				if done {
+					continue
+				}
+				boolAllDone = false
+				// 1. 获取一个worker
+				workerAddr := c.applyWorker()
+				if strings.Compare(workerAddr, "") == 0 {
+					time.Sleep(1 * time.Second)
+					continue
+				}
+
+				// 2. 调用worker的MapReq
+				go CallMapReq(workerAddr, fileName)
+			}
+			if boolAllDone {
+				break
+			}
+			fmt.Println("in map")
+			time.Sleep(1 * time.Second)
+		}
+
+		// 2. reduce分配
+		for {
+			allDone := true
+			for k, done := range c.reducers {
+				shuffles, ok := c.mapperShuffle[k]
+				if !ok || len(shuffles) == 0 {
+					c.reducers[k] = true
+					continue
+				}
+				if done {
+					continue
+				}
+				allDone = false
+
+				// 1. 获取一个worker
+				workerAddr := c.applyWorker()
+				if strings.Compare(workerAddr, "") == 0 {
+					time.Sleep(1 * time.Second)
+					continue
+				}
+
+				// 2. 调用worker的ReduceReq
+				go CallReduceReq(workerAddr, k, shuffles)
+				time.Sleep(1 * time.Second)
+			}
+			if allDone {
+				break
+			}
+			fmt.Println("in reduce")
+			time.Sleep(1 * time.Second)
+		}
+
+		fmt.Println("task done")
+	}()
+
 	c.server()
 	return &c
+}
+
+// send an RPC request to the coordinator, wait for the response.
+// usually returns true.
+// returns false if something goes wrong.
+
+func CallMapReq(workerAddr, fileName string) bool {
+	args := MapReqArgs{FileName: fileName}
+	reply := MapReqReply{}
+	fmt.Println("Map任务调用 addr:" + workerAddr + " ReducerKey:" + fileName + " ReducerKey:" + fileName)
+	ok := callWorker(workerAddr, "WorkerInfo.MapReq", &args, &reply)
+	if !ok {
+		return false
+	}
+	return reply.Success
+}
+
+func CallReduceReq(workerAddr, fileName string, shuffles []string) bool {
+	args := ReduceReqArgs{fileName, shuffles}
+	reply := ReduceReqReply{}
+	fmt.Println("addr:" + workerAddr + " ReducerKey:" + fileName + " ReducerKey:" + fileName)
+	ok := callWorker(workerAddr, "WorkerInfo.ReduceReq", &args, &reply)
+	if !ok {
+		return false
+	}
+	return reply.Success
+}
+
+func callWorker(workerAddr, rpcName string, args interface{}, reply interface{}) bool {
+	c, err := rpc.DialHTTP("tcp", workerAddr)
+	// sockname := coordinatorSock()
+	// c, err := rpc.DialHTTP("unix", sockname)
+	if err != nil {
+		log.Fatal("dialing:", err)
+	}
+	defer c.Close()
+
+	err = c.Call(rpcName, args, reply)
+	if err == nil {
+		return true
+	}
+
+	fmt.Println(err)
+	return false
 }

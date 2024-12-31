@@ -26,56 +26,58 @@ type ExampleReply struct {
 
 // 1. 注册
 type RegisterArgs struct {
-	addr string
+	Addr string
 }
 
 type RegisterReply struct {
-	success bool
+	Success bool
 }
 
 // 2. Map Request
 type MapReqArgs struct {
-	fileName string
+	FileName string
 }
 
 type MapReqReply struct {
-	success bool
+	Success bool
 }
 
 // 3. Map Done
 type MapDoneArgs struct {
-	fileName string
-	shuffles map[string]string
+	Addr     string
+	FileName string
+	Shuffles map[string][]string
 }
 
 type MapDoneReply struct {
-	success bool
+	Success bool
 }
 
 // 4. Reduce Request
 type ReduceReqArgs struct {
-	shuffleName string
-	shuffles    []string
+	ReducerKey string
+	Shuffles   []string
 }
 
 type ReduceReqReply struct {
-	success bool
+	Success bool
 }
 
 // 5. Map Done
 type ReduceDoneArgs struct {
-	shuffleName string
-	result      string
+	ShuffleName string
+	Result      string
 }
 
 type ReduceDoneReply struct {
-	success bool
+	Success bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
 // Can't use the current directory since
 // Athena AFS doesn't support UNIX-domain sockets.
+// 通过Unix Socket比使用net Socket在统一机器通信更快
 func coordinatorSock() string {
 	s := "/var/tmp/824-mr-"
 	s += strconv.Itoa(os.Getuid())
