@@ -64,10 +64,13 @@ func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 	c.mapperLock.Lock()
 	defer c.mapperLock.Unlock()
+	log.Printf("MapDone started, addr:%s, fileName:%s, shuffles:%v", args.Addr, args.FileName, len(args.Shuffles))
 	// 1. 如果 fileName已经处理过直接跳过
 	done, ok := c.mappers[args.FileName]
 	if ok && done {
+		log.Printf("MapDone done, addr:%s, fileName:%s \n", args.Addr, args.FileName)
 		reply.Success = true
+		c.releaseWorker(args.Addr)
 		return nil
 	}
 
@@ -80,10 +83,11 @@ func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 			c.mapperShuffle[k] = shuffles
 		}
 		c.mapperShuffle[k] = append(shuffles, v...)
-		c.mappers[k] = true
 	}
 
 	// 3. 释放一个worker
+	log.Printf("MapDone finished, addr:%s, fileName:%s \n", args.Addr, args.FileName)
+	reply.Success = true
 	c.releaseWorker(args.Addr)
 	return nil
 }
@@ -165,6 +169,7 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of ReducerKey tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	log.Printf("files:%v", files)
 	c := Coordinator{}
 	c.mappers = make(map[string]bool)
 	c.mapperShuffle = make(map[string][]string)
@@ -178,17 +183,15 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	go func() {
 		for {
 			idelCnt := 0
-			for _, worker := range c.idelWorks {
-				fmt.Printf("worker addr:%s\n", worker.Addr)
+			for _ = range c.idelWorks {
 				idelCnt++
 			}
 			processingCnt := 0
-			for _, worker := range c.processingWorks {
-				fmt.Printf("worker addr:%s\n", worker.Addr)
+			for _ = range c.processingWorks {
 				processingCnt++
 			}
 			totalCnt := idelCnt + processingCnt
-			fmt.Printf("worker count:%d, idelcnt:%d, processingCnt:%d\n", totalCnt, idelCnt, processingCnt)
+			log.Printf("worker count:%d, idelcnt:%d, processingCnt:%d\n", totalCnt, idelCnt, processingCnt)
 			time.Sleep(1 * time.Second)
 		}
 	}()
@@ -220,15 +223,15 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 				go func() {
 					success := CallMapReq(workerAddr, fileName)
 					if !success {
-						c.releaseWorker(workerAddr)
 						fmt.Println("call fail release addr:", workerAddr)
+						c.releaseWorker(workerAddr)
 					}
 				}()
 			}
 			if boolAllDone {
 				break
 			}
-			fmt.Println("in map")
+			log.Println("in map")
 			time.Sleep(1 * time.Second)
 		}
 
@@ -284,12 +287,9 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 func CallMapReq(workerAddr, fileName string) bool {
 	args := MapReqArgs{FileName: fileName}
 	reply := MapReqReply{}
-	fmt.Println("Map任务调用 addr:" + workerAddr + " ReducerKey:" + fileName + " ReducerKey:" + fileName)
+	fmt.Println("Map任务调用 addr:" + workerAddr + " fileName:" + fileName)
 	ok := callWorker(workerAddr, "WorkerInfo.MapReq", &args, &reply)
-	if !ok {
-		return false
-	}
-	return reply.Success
+	return ok && reply.Success
 }
 
 func CallReduceReq(workerAddr, fileName string, shuffles []string) bool {
@@ -306,21 +306,24 @@ func CallReduceReq(workerAddr, fileName string, shuffles []string) bool {
 func callWorker(workerAddr, rpcName string, args interface{}, reply interface{}) bool {
 	defer func() {
 		anyError := recover()
-		log.Fatalf("call worker error:%v", anyError)
+		if anyError != nil {
+			log.Printf("call worker error:%v", anyError)
+		}
 	}()
 
 	c, err := rpc.DialHTTP("tcp", workerAddr)
 	// sockname := coordinatorSock()
 	// c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		log.Printf("dialing:", err)
+		return false
 	}
 
 	err = c.Call(rpcName, args, reply)
 
 	closeErr := c.Close()
 	if closeErr != nil {
-		log.Fatal("close error:", closeErr)
+		log.Printf("worker: %s close error:", workerAddr, closeErr)
 		return false
 	}
 
@@ -328,6 +331,6 @@ func callWorker(workerAddr, rpcName string, args interface{}, reply interface{})
 		return true
 	}
 
-	log.Fatalf("call rpc error:%v", err.Error())
+	log.Printf("call rpc error:%v", err.Error())
 	return false
 }

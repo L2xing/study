@@ -55,7 +55,7 @@ func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(strin
 
 func Map(document string, value string) (res []mr.KeyValue) {
 	m := make(map[string]bool)
-	log.Fatalln("开始 indexer map")
+	log.Println("开始 indexer map")
 	words := strings.FieldsFunc(value, func(x rune) bool { return !unicode.IsLetter(x) })
 	for _, w := range words {
 		m[w] = true
