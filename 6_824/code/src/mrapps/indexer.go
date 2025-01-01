@@ -6,7 +6,10 @@ package main
 // go build -buildmode=plugin indexer.go
 //
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 import "6.824/mr"
 
 import "strings"
@@ -19,6 +22,7 @@ import "sort"
 // key/value pairs, each represented by a mr.KeyValue.
 func Map(document string, value string) (res []mr.KeyValue) {
 	m := make(map[string]bool)
+	log.Fatalln("开始 indexer map")
 	words := strings.FieldsFunc(value, func(x rune) bool { return !unicode.IsLetter(x) })
 	for _, w := range words {
 		m[w] = true
@@ -27,6 +31,7 @@ func Map(document string, value string) (res []mr.KeyValue) {
 		kv := mr.KeyValue{w, document}
 		res = append(res, kv)
 	}
+	fmt.Println("完成 indexer map")
 	return
 }
 

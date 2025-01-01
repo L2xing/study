@@ -32,7 +32,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 	// 1. 启动一个server
 	fmt.Println("cli-server启动中")
-	addr := cliserver()
+	worker := &WorkerInfo{State: 0, Lock: &sync.Mutex{}, mapf: mapf, reducef: reducef}
+	addr := cliserver(worker)
 	fmt.Println("cli-server启动，name=" + addr)
 
 	// 2. 向server注册
@@ -59,7 +60,7 @@ type WorkerInfo struct {
 }
 
 func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
-	fmt.Println("Map调用接受")
+	log.Println("Map调用接受")
 	w.Lock.Lock()
 	defer w.Lock.Unlock()
 
@@ -73,9 +74,7 @@ func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
 	reply.Success = true
 
 	// 开启携程开始处理mapper
-	go func() {
-		w.handlerMapper(args.FileName)
-	}()
+	//w.handlerMapper(args.FileName)
 	return nil
 }
 
@@ -102,13 +101,15 @@ func (w *WorkerInfo) handlerMapper(fileName string) {
 	// 1. 开启readfile
 	contentByte, err := os.ReadFile(fileName)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("worker读取fileName失败。 fileName:%s, err:%v", fileName, err)
+		return
 	}
 	content := string(contentByte)
 
 	// 2. 执行mapper
+	log.Fatalf("fileName:%s w:%s \n", fileName, w.mapf == nil)
 	kvs := w.mapf(fileName, content)
-
+	log.Fatalf("kvs:%s \n", len(kvs))
 	// 3. 存入shuffle
 	shuffleMap := make(map[string][]string)
 	if len(kvs) > 0 {
@@ -125,6 +126,7 @@ func (w *WorkerInfo) handlerMapper(fileName string) {
 		}
 	}
 	w.State = 0
+	log.Fatalf("map done, fileName: %s  \n", fileName)
 
 	// 4. 通知coordinator
 	CallMapDone(fileName, shuffleMap)
@@ -214,7 +216,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 }
 
 // start a thread that listens for RPCs from worker.go
-func cliserver() string {
+func cliserver(worker *WorkerInfo) string {
 	l, e := net.Listen("tcp", ":0")
 	// sockname := coordinatorSock()
 	// os.Remove(sockname)
@@ -223,7 +225,6 @@ func cliserver() string {
 		log.Fatal("listen error:", e)
 	}
 	addr := l.Addr().String()
-	worker := WorkerInfo{Addr: addr, State: 0, Lock: &sync.Mutex{}}
 	rpc.Register(worker)
 	rpc.HandleHTTP()
 	go http.Serve(l, nil)

@@ -217,7 +217,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 				}
 
 				// 2. 调用worker的MapReq
-				go CallMapReq(workerAddr, fileName)
+				go func() {
+					success := CallMapReq(workerAddr, fileName)
+					if !success {
+						c.releaseWorker(workerAddr)
+						fmt.Println("call fail release addr:", workerAddr)
+					}
+				}()
 			}
 			if boolAllDone {
 				break
@@ -248,7 +254,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 				}
 
 				// 2. 调用worker的ReduceReq
-				go CallReduceReq(workerAddr, k, shuffles)
+				go func() {
+					success := CallReduceReq(workerAddr, k, shuffles)
+					if !success {
+						c.releaseWorker(workerAddr)
+						fmt.Println("call fail release addr:", workerAddr)
+					}
+				}()
 				time.Sleep(1 * time.Second)
 			}
 			if allDone {
@@ -292,19 +304,30 @@ func CallReduceReq(workerAddr, fileName string, shuffles []string) bool {
 }
 
 func callWorker(workerAddr, rpcName string, args interface{}, reply interface{}) bool {
+	defer func() {
+		anyError := recover()
+		log.Fatalf("call worker error:%v", anyError)
+	}()
+
 	c, err := rpc.DialHTTP("tcp", workerAddr)
 	// sockname := coordinatorSock()
 	// c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
-	defer c.Close()
 
 	err = c.Call(rpcName, args, reply)
+
+	closeErr := c.Close()
+	if closeErr != nil {
+		log.Fatal("close error:", closeErr)
+		return false
+	}
+
 	if err == nil {
 		return true
 	}
 
-	fmt.Println(err)
+	log.Fatalf("call rpc error:%v", err.Error())
 	return false
 }
