@@ -14,7 +14,7 @@ type Coordinator struct {
 	nReduce int
 
 	// mapper
-	mappers map[string]bool
+	mappers map[string][]string
 
 	// ReducerKey
 
@@ -69,6 +69,14 @@ func InitCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 	c.files = files
 	c.nReduce = nReduce
+
+	// 1. 初始化mapper
+	c.mappers = make(map[string][]string)
+	for _, file := range files {
+		c.mappers[file] = make([]string, nReduce)
+	}
+
+	// 2. 初始化
 
 	return &c
 }
