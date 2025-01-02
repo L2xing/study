@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
-	"sync"
 	"time"
 )
 
@@ -32,8 +31,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 	// 1. 启动一个server
 	log.Println("cli-server启动中")
-	worker := &WorkerInfo{State: 0, Lock: &sync.Mutex{}, mapf: mapf, reducef: reducef}
-	cliserver(worker)
+	worker := &WorkerInfo{mapf: mapf, reducef: reducef}
+	workerServer(worker)
 	log.Println("cli-server启动，name=" + worker.Addr)
 
 	// 2. 向server注册
@@ -53,111 +52,35 @@ func Worker(mapf func(string, string) []KeyValue,
 
 type WorkerInfo struct {
 	Addr    string
-	State   int
-	Lock    *sync.Mutex
 	mapf    func(string, string) []KeyValue
 	reducef func(string, []string) string
 }
 
 func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
-	log.Println("Map调用接受")
-	w.Lock.Lock()
-	defer w.Lock.Unlock()
-
-	if w.State != 0 {
-		reply.Success = false
-		return nil
-	}
-
-	// in mapper
-	w.State = 1
-	reply.Success = true
-
-	// 开启携程开始处理mapper
-	go func(fileName string) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Println("Recovered in WorkerInfo", r)
-			}
-		}()
-		log.Printf("map携程 worker:%v addr1:%s, addr2:%s\n", w, w.Addr, (*w).Addr)
-		shuffles, _ := w.handlerMapper(fileName)
-		CallMapDone(w.Addr, fileName, shuffles)
-	}(args.FileName)
 	return nil
 }
 
 func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error {
-	fmt.Println("Reduce调用接受")
-	w.Lock.Lock()
-	defer w.Lock.Unlock()
-	if w.State != 0 {
-		reply.Success = false
-		return nil
-	}
-
-	w.State = 1
-	reply.Success = true
-
-	// 开启携程开始处理reduce
-	w.handlerReducer(args.ReducerKey, args.Shuffles)
 	return nil
 }
 
-func (w *WorkerInfo) handlerMapper(fileName string) (map[string][]string, error) {
-	// 1. 开启readfile
+/**
+ * 读取文件内容
+ */
+func ReadFile(fileName string) (string, error) {
 	contentByte, err := os.ReadFile(fileName)
 	if err != nil {
 		log.Printf("worker读取fileName失败。 fileName:%s, err:%v \n", fileName, err)
-		return nil, err
+		return "", err
 	}
 
 	if len(contentByte) == 0 {
 		log.Printf("fileName:%s 文件内容为空 \n", fileName)
-		return make(map[string][]string), nil
+		return "", nil
 	}
 
 	content := string(contentByte)
-
-	// 2. 执行mapper
-	kvs := w.mapf(fileName, content)
-	log.Printf("kvs:%d \n", len(kvs))
-	// 3. 存入shuffle
-	shuffleMap := make(map[string][]string)
-	if len(kvs) > 0 {
-		for _, kv := range kvs {
-			key := kv.Key
-			value := kv.Value
-			shuffles, exist := shuffleMap[key]
-			if exist {
-				shuffles = append(shuffles, value)
-			} else {
-				shuffles = []string{value}
-			}
-			shuffleMap[key] = shuffles
-		}
-	}
-	w.State = 0
-	log.Printf("map done, fileName: %s  \n", fileName)
-
-	// 4. 通知coordinator
-	return shuffleMap, nil
-}
-
-func (w *WorkerInfo) handlerReducer(name string, shuffles []string) {
-	if len(shuffles) == 0 {
-		return
-	}
-	output := "./reduce_tmp/mr-out-" + name
-	log.Printf("reducer output:%s \n", output)
-	createFile, err := os.Create("mr-out-" + name)
-	if err != nil {
-		return
-	}
-	reducef := w.reducef(name, shuffles)
-	createFile.WriteString(reducef)
-	createFile.Close()
-	//CallReduceDone(name, output)
+	return content, nil
 }
 
 // example function to show how to make an RPC call to the coordinator.
@@ -237,7 +160,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 }
 
 // start a thread that listens for RPCs from worker.go
-func cliserver(worker *WorkerInfo) {
+func workerServer(worker *WorkerInfo) {
 	l, e := net.Listen("tcp", ":0")
 	// sockname := coordinatorSock()
 	// os.Remove(sockname)
