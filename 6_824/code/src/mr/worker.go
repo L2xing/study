@@ -108,13 +108,18 @@ func (w *WorkerInfo) handlerMapper(fileName string) (map[string][]string, error)
 	// 1. 开启readfile
 	contentByte, err := os.ReadFile(fileName)
 	if err != nil {
-		log.Fatalf("worker读取fileName失败。 fileName:%s, err:%v", fileName, err)
+		log.Printf("worker读取fileName失败。 fileName:%s, err:%v \n", fileName, err)
 		return nil, err
 	}
+
+	if len(contentByte) == 0 {
+		log.Printf("fileName:%s 文件内容为空 \n", fileName)
+		return make(map[string][]string), nil
+	}
+
 	content := string(contentByte)
 
 	// 2. 执行mapper
-	log.Printf("fileName:%s w:%s \n", fileName, w.mapf == nil)
 	kvs := w.mapf(fileName, content)
 	log.Printf("kvs:%d \n", len(kvs))
 	// 3. 存入shuffle
@@ -143,8 +148,8 @@ func (w *WorkerInfo) handlerReducer(name string, shuffles []string) {
 	if len(shuffles) == 0 {
 		return
 	}
-	output := "mr-out-" + name
-	log.Printf("output:%s \n", output)
+	output := "./reduce_tmp/mr-out-" + name
+	log.Printf("reducer output:%s \n", output)
 	createFile, err := os.Create("mr-out-" + name)
 	if err != nil {
 		return
