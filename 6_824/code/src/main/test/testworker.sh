@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-go build -buildmode=plugin ../../mrapps/indexer.go
+go build -buildmode=plugin ../../mrapps/wc.go
 
-go run ../mrworker.go ./indexer.so
+go run ../mrworker.go ./wc.so
