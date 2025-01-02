@@ -17,11 +17,11 @@ type Coordinator struct {
 
 	// mapper
 	mapperLock    sync.Mutex
-	mappers       map[string]bool
+	mappers       map[string]int
 	mapperShuffle map[string][]string
 
 	// ReducerKey
-	reducers map[string]bool
+	reducers map[string]int
 
 	// all
 	mutexWork       sync.Mutex
@@ -66,8 +66,8 @@ func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 	defer c.mapperLock.Unlock()
 	log.Printf("MapDone started, addr:%s, fileName:%s, shuffles:%v", args.Addr, args.FileName, len(args.Shuffles))
 	// 1. 如果 fileName已经处理过直接跳过
-	done, ok := c.mappers[args.FileName]
-	if ok && done {
+	state, ok := c.mappers[args.FileName]
+	if ok && state == 2 {
 		log.Printf("MapDone done, addr:%s, fileName:%s \n", args.Addr, args.FileName)
 		reply.Success = true
 		c.releaseWorker(args.Addr)
@@ -75,7 +75,7 @@ func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 	}
 
 	// 2. 合并fileName的shuffle
-	c.mappers[args.FileName] = true
+	c.mappers[args.FileName] = 2
 	for k, v := range args.Shuffles {
 		shuffles, ok := c.mapperShuffle[k]
 		if !ok {
@@ -83,12 +83,23 @@ func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 			c.mapperShuffle[k] = shuffles
 		}
 		c.mapperShuffle[k] = append(shuffles, v...)
+		c.reducers[k] = 0
 	}
 
 	// 3. 释放一个worker
 	log.Printf("MapDone finished, addr:%s, fileName:%s \n", args.Addr, args.FileName)
 	reply.Success = true
 	c.releaseWorker(args.Addr)
+	return nil
+}
+
+func (c *Coordinator) ReduceDone(args *ReduceDoneArgs, reply *MapDoneReply) error {
+	c.mapperLock.Lock()
+	defer c.mapperLock.Unlock()
+	log.Printf("Reducer任务完成。reduceKey: %s, output: %s\n", args.ShuffleName, args.Result)
+	c.releaseWorker(args.Addr)
+	reply.Success = true
+	c.reducers[args.ShuffleName] = 2
 	return nil
 }
 
@@ -171,10 +182,10 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	log.Printf("files:%v", files)
 	c := Coordinator{}
-	c.mappers = make(map[string]bool)
+	c.mappers = make(map[string]int)
 	c.mapperShuffle = make(map[string][]string)
 
-	c.reducers = make(map[string]bool)
+	c.reducers = make(map[string]int)
 	c.idelWorks = make([]WorkerInfo, 0)
 	c.processingWorks = make([]WorkerInfo, 0)
 
@@ -198,7 +209,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// 2. Task分配
 	for _, fileName := range files {
-		c.mappers[fileName] = false
+		c.mappers[fileName] = 0
 	}
 
 	go func() {
@@ -207,11 +218,19 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		// 1. map分配
 		for {
 			boolAllDone := true
-			for fileName, done := range c.mappers {
-				if done {
+			for fileName, state := range c.mappers {
+				// 	已完成
+				if state == 2 {
 					continue
 				}
+
+				// 处理中
 				boolAllDone = false
+				if state == 1 {
+					continue
+				}
+
+				// 待处理
 				// 1. 获取一个worker
 				workerAddr := c.applyWorker()
 				if strings.Compare(workerAddr, "") == 0 {
@@ -220,13 +239,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 				}
 
 				// 2. 调用worker的MapReq
-				go func() {
-					success := CallMapReq(workerAddr, fileName)
-					if !success {
-						fmt.Println("call fail release addr:", workerAddr)
-						c.releaseWorker(workerAddr)
-					}
-				}()
+				c.mappers[fileName] = 1
+				success := CallMapReq(workerAddr, fileName)
+				if !success {
+					c.mappers[fileName] = 0
+					fmt.Println("call fail release addr:", workerAddr)
+					c.releaseWorker(workerAddr)
+				}
 			}
 			if boolAllDone {
 				break
@@ -238,17 +257,25 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		// 2. reduce分配
 		for {
 			allDone := true
-			for k, done := range c.reducers {
+			for k, state := range c.reducers {
 				shuffles, ok := c.mapperShuffle[k]
 				if !ok || len(shuffles) == 0 {
-					c.reducers[k] = true
+					c.reducers[k] = 2
 					continue
 				}
-				if done {
+
+				// 未处理
+				if state == 2 {
 					continue
 				}
 				allDone = false
 
+				// 处理中
+				if state == 1 {
+					continue
+				}
+
+				// 未处理
 				// 1. 获取一个worker
 				workerAddr := c.applyWorker()
 				if strings.Compare(workerAddr, "") == 0 {
@@ -257,13 +284,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 				}
 
 				// 2. 调用worker的ReduceReq
-				go func() {
-					success := CallReduceReq(workerAddr, k, shuffles)
-					if !success {
-						c.releaseWorker(workerAddr)
-						fmt.Println("call fail release addr:", workerAddr)
-					}
-				}()
+				c.reducers[k] = 1
+				success := CallReduceReq(workerAddr, k, shuffles)
+				if !success {
+					c.reducers[k] = 0
+					c.releaseWorker(workerAddr)
+					fmt.Println("call fail release addr:", workerAddr)
+				}
 				time.Sleep(1 * time.Second)
 			}
 			if allDone {
@@ -287,15 +314,15 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 func CallMapReq(workerAddr, fileName string) bool {
 	args := MapReqArgs{FileName: fileName}
 	reply := MapReqReply{}
-	fmt.Println("Map任务调用 addr:" + workerAddr + " fileName:" + fileName)
+	log.Println("Map任务调用 addr:" + workerAddr + " fileName:" + fileName)
 	ok := callWorker(workerAddr, "WorkerInfo.MapReq", &args, &reply)
 	return ok && reply.Success
 }
 
-func CallReduceReq(workerAddr, fileName string, shuffles []string) bool {
-	args := ReduceReqArgs{fileName, shuffles}
+func CallReduceReq(workerAddr, reducerKey string, shuffles []string) bool {
+	args := ReduceReqArgs{reducerKey, shuffles}
 	reply := ReduceReqReply{}
-	fmt.Println("addr:" + workerAddr + " ReducerKey:" + fileName + " ReducerKey:" + fileName)
+	log.Println("Reducer任务调用 addr:" + workerAddr + " ReducerKey:" + reducerKey)
 	ok := callWorker(workerAddr, "WorkerInfo.ReduceReq", &args, &reply)
 	if !ok {
 		return false
