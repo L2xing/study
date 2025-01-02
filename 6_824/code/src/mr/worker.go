@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -57,7 +58,62 @@ type WorkerInfo struct {
 }
 
 func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
+	log.Printf("WorkerInfo.MapReq(%v)", args)
+
+	// 1. 读取file
+	fileName := args.FileName
+	fileContent, _ := ReadFile(fileName)
+
+	// 2. 调用map
+	kvs := w.mapf(fileName, fileContent)
+	log.Printf("map完成 fileName:%s \n", fileName)
+
+	// 3. 创建shuffle
+	// 3.1 kv结果分组
+	groupKVs := make([][]KeyValue, args.NReduce)
+	for idx := range groupKVs {
+		groupKVs[idx] = make([]KeyValue, 0)
+	}
+
+	for _, kv := range kvs {
+		key := kv.Key
+		hashI := ihash(key) % args.NReduce
+		groupKVs[hashI] = append(groupKVs[hashI], kv)
+	}
+	// todo shuffle的文件生成方式可能会hash碰撞
+	shuffleFilePrefix := "map_out_" + strconv.Itoa(ihash(fileName)) + "_"
+	for idx, kvs := range groupKVs {
+		if len(kvs) == 0 {
+			continue
+		}
+		shuffleFile := shuffleFilePrefix + strconv.Itoa(idx)
+		CreateShuffleFile(shuffleFile, kvs)
+	}
+
+	reply.Shuffle = shuffleFilePrefix
+	reply.Success = true
 	return nil
+}
+
+func CreateShuffleFile(fileName string, kvs []KeyValue) {
+	if len(kvs) == 0 {
+		return
+	}
+
+	// 1. 创建文件
+	file, err := os.Create(fileName)
+	if err != nil {
+		log.Fatalf("文件创建失败，终止服务。 file:%s,", fileName)
+	}
+	defer file.Close()
+
+	// 2. 追加内容
+	for _, kv := range kvs {
+		_, err := fmt.Fprintf(file, "%s %s\n", kv.Key, kv.Value)
+		if err != nil {
+			continue
+		}
+	}
 }
 
 func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error {

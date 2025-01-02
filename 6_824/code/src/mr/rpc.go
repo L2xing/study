@@ -36,9 +36,11 @@ type RegisterReply struct {
 // 2. Map Request
 type MapReqArgs struct {
 	FileName string
+	NReduce  int
 }
 
 type MapReqReply struct {
+	Shuffle string
 	Success bool
 }
 
@@ -55,8 +57,8 @@ type MapDoneReply struct {
 
 // 4. Reduce Request
 type ReduceReqArgs struct {
-	ReducerKey string
-	Shuffles   []string
+	hashi    int
+	Shuffles []string
 }
 
 type ReduceReqReply struct {
