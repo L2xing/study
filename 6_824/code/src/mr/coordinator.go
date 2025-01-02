@@ -28,7 +28,8 @@ type Coordinator struct {
 	curIdx int
 
 	// ret
-	ret bool
+	retL sync.Mutex
+	ret  bool
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -74,6 +75,8 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
+	c.retL.Lock()
+	defer c.retL.Unlock()
 	return c.ret
 }
 
@@ -156,6 +159,7 @@ func (c *Coordinator) handleMapReducer() {
 			shuffles = append(shuffles, shuffle)
 		}
 		CallReduceReq(worker, idx, shuffles)
+		c.reducers[idx] = true
 	}
 
 	// 4. reducer验证
@@ -176,6 +180,8 @@ func (c *Coordinator) handleMapReducer() {
 	}
 
 	log.Printf("Done!\n")
+	c.retL.Lock()
+	defer c.retL.Unlock()
 	c.ret = true
 }
 
@@ -208,15 +214,17 @@ func CallMapReq(workerAddr, fileName string, nReduce int) string {
 	return ""
 }
 
-func CallReduceReq(workerAddr string, hashI int, shuffles []string) bool {
+func CallReduceReq(workerAddr string, hashI int, shuffles []string) string {
 	args := ReduceReqArgs{hashI, shuffles}
 	reply := ReduceReqReply{}
-	log.Printf("addr:%s, hashI:%d, shuffles:%v \n", workerAddr, hashI, shuffles)
+	log.Printf("Reduce调用 addr:%s, args:%v \n", workerAddr, args)
 	ok := callWorker(workerAddr, "WorkerInfo.ReduceReq", &args, &reply)
-	if !ok {
-		return false
+	log.Printf("Reduce调用结果 addr:%s, args:%v, reply:%v \n", workerAddr, args, reply)
+	if ok && reply.Success {
+		return reply.OutPutFile
 	}
-	return reply.Success
+	log.Fatalf("Reduce调用失败 addr:%s, args:%v \n", workerAddr, args)
+	return ""
 }
 
 func callWorker(workerAddr, rpcName string, args interface{}, reply interface{}) bool {

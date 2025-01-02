@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -109,6 +110,7 @@ func CreateShuffleFile(fileName string, kvs []KeyValue) {
 
 	// 2. 追加内容
 	for _, kv := range kvs {
+		// todo 这个可能会遇到key或value中存在空格的数据
 		_, err := fmt.Fprintf(file, "%s %s\n", kv.Key, kv.Value)
 		if err != nil {
 			continue
@@ -117,6 +119,44 @@ func CreateShuffleFile(fileName string, kvs []KeyValue) {
 }
 
 func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error {
+	log.Printf("WorkerInfo.ReduceReq(%v)", args)
+	// 1. 将文件读入内存中
+	shuffles := make([]string, 0)
+	hashi := args.HashI
+	for _, shufflePrefix := range args.Shuffles {
+		shuffle := shufflePrefix + strconv.Itoa(hashi)
+		shuffles = append(shuffles, shuffle)
+	}
+
+	shuffleMaps := make(map[string][]string, 0)
+	for _, shuffle := range shuffles {
+		content, _ := ReadFile(shuffle)
+		lineStrArray := strings.Split(content, "\n")
+		for _, lineStr := range lineStrArray {
+			kv := strings.Split(lineStr, " ")
+			if len(kv) != 2 {
+				log.Printf("异常的kv=%v\n", kv)
+				continue
+			}
+			_, ok := shuffleMaps[kv[0]]
+			if !ok {
+				shuffleMaps[kv[0]] = make([]string, 0)
+			}
+			shuffleMaps[kv[0]] = append(shuffleMaps[kv[0]], kv[1])
+		}
+	}
+
+	// 2. 调用reducer
+	reduceOutPut := "mr-out-" + strconv.Itoa(hashi)
+	file, _ := os.Create(reduceOutPut)
+	for reduceKey, reduceValues := range shuffleMaps {
+		reduceResult := w.reducef(reduceKey, reduceValues)
+		fmt.Fprintf(file, "%s %s\n", reduceKey, reduceResult)
+	}
+
+	reply.Success = true
+	reply.HashI = hashi
+	reply.OutPutFile = reduceOutPut
 	return nil
 }
 
@@ -196,7 +236,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	// sockname := coordinatorSock()
 	// c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
-		log.Println("coordinator can not connect")
+		log.Fatalf("coordinator can not connect")
 		return false
 	}
 	log.Printf("调用master rpcName:%s \n", rpcname)

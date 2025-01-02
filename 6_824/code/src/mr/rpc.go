@@ -57,12 +57,14 @@ type MapDoneReply struct {
 
 // 4. Reduce Request
 type ReduceReqArgs struct {
-	hashi    int
+	HashI    int
 	Shuffles []string
 }
 
 type ReduceReqReply struct {
-	Success bool
+	HashI      int
+	OutPutFile string
+	Success    bool
 }
 
 // 5. Map Done
