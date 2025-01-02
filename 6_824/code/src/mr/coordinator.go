@@ -186,6 +186,8 @@ func (c *Coordinator) handleMapReducer() {
 }
 
 func (c *Coordinator) applyWorker() string {
+	c.wLock.Lock()
+	defer c.wLock.Unlock()
 	if len(c.worker) == 0 {
 		log.Println("no worker")
 		return ""
