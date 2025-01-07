@@ -233,10 +233,14 @@ func ReduceReq(c *Coordinator, idx int) {
 				log.Printf("Recovered in ReduceReq: %v", r)
 			}
 		}()
-		CallReduceReq(worker, idx, shuffles)
-		c.reducersLock[idx].Lock()
-		defer c.reducersLock[idx].Unlock()
-		c.reducers[idx] = true
+		reduceDone := CallReduceReq(worker, idx, shuffles)
+		if !reduceDone {
+			return
+		} else {
+			c.reducersLock[idx].Lock()
+			defer c.reducersLock[idx].Unlock()
+			c.reducers[idx] = true
+		}
 	}(worker, idx, c)
 }
 
@@ -295,21 +299,21 @@ func CallMapReq(workerAddr, fileName string, nReduce int) string {
 	if ok && reply.Success {
 		return reply.Shuffle
 	}
-	log.Fatalf("Map调用失败 addr:%s, args:%v \n", workerAddr, args)
+	log.Printf("Map调用失败 addr:%s, args:%v \n", workerAddr, args)
 	return ""
 }
 
-func CallReduceReq(workerAddr string, hashI int, shuffles []string) string {
+func CallReduceReq(workerAddr string, hashI int, shuffles []string) bool {
 	args := ReduceReqArgs{hashI, shuffles}
 	reply := ReduceReqReply{}
 	log.Printf("Reduce调用 addr:%s, args:%v \n", workerAddr, args)
 	ok := callWorker(workerAddr, "WorkerInfo.ReduceReq", &args, &reply)
 	log.Printf("Reduce调用结果 addr:%s, args:%v, reply:%v \n", workerAddr, args, reply)
 	if ok && reply.Success {
-		return reply.OutPutFile
+		return true
 	}
-	log.Fatalf("Reduce调用失败 addr:%s, args:%v \n", workerAddr, args)
-	return ""
+	log.Printf("Reduce调用失败 addr:%s, args:%v \n", workerAddr, args)
+	return false
 }
 
 func CallCloseWorker(workerAddr string) {
