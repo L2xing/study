@@ -22,32 +22,32 @@ type Coordinator struct {
 	reducers          []bool
 	reducerFilePrefix string
 
-	// worker
-	wLock  sync.Mutex
-	worker []string
-	curIdx int
+	// workers
+	wLock   sync.Mutex
+	workers []string
+	curIdx  int
 
 	// ret
 	retL sync.Mutex
 	ret  bool
 }
 
-// Your code here -- RPC handlers for the worker to call.
+// Your code here -- RPC handlers for the workers to call.
 func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 	c.wLock.Lock()
 	defer c.wLock.Unlock()
 
 	hasWorker := false
 	workerAddr := args.Addr
-	for _, addr := range c.worker {
+	for _, addr := range c.workers {
 		if strings.Compare(addr, workerAddr) == 0 {
 			hasWorker = true
 		}
 	}
 
 	if !hasWorker {
-		log.Printf("register worker: %v", workerAddr)
-		c.worker = append(c.worker, workerAddr)
+		log.Printf("register workers: %v", workerAddr)
+		c.workers = append(c.workers, workerAddr)
 	}
 
 	reply.Success = true
@@ -58,7 +58,7 @@ func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 	return nil
 }
 
-// start a thread that listens for RPCs from worker.go
+// start a thread that listens for RPCs from workers.go
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
@@ -77,7 +77,16 @@ func (c *Coordinator) server() {
 func (c *Coordinator) Done() bool {
 	c.retL.Lock()
 	defer c.retL.Unlock()
-	return c.ret
+	if !c.ret {
+		return false
+	}
+
+	// 1. 通知所有worker退出
+	for _, addr := range c.workers {
+		CallCloseWorker(addr)
+	}
+
+	return true
 }
 
 // create a Coordinator.
@@ -121,10 +130,10 @@ func (c *Coordinator) handleMapReducer() {
 			worker = c.applyWorker()
 			time.Sleep(500 * time.Millisecond)
 		}
-		//go func(worker, fileName string) {
+		//go func(workers, fileName string) {
 		shuffle := CallMapReq(worker, fileName, c.nReduce)
 		c.mappers[fileName] = shuffle
-		//}(worker, fileName)
+		//}(workers, fileName)
 	}
 
 	// 2. 循环直到Map全部处理完毕
@@ -188,15 +197,15 @@ func (c *Coordinator) handleMapReducer() {
 func (c *Coordinator) applyWorker() string {
 	c.wLock.Lock()
 	defer c.wLock.Unlock()
-	if len(c.worker) == 0 {
-		log.Println("no worker")
+	if len(c.workers) == 0 {
+		log.Println("no workers")
 		return ""
 	}
 
-	firstAddr := c.worker[0]
-	c.worker = c.worker[1:]
-	c.worker = append(c.worker, firstAddr)
-	log.Printf("apply worker: %v", firstAddr)
+	firstAddr := c.workers[0]
+	c.workers = c.workers[1:]
+	c.workers = append(c.workers, firstAddr)
+	log.Printf("apply workers: %v", firstAddr)
 	return firstAddr
 }
 
@@ -229,11 +238,23 @@ func CallReduceReq(workerAddr string, hashI int, shuffles []string) string {
 	return ""
 }
 
+func CallCloseWorker(workerAddr string) {
+	args := CloseWorkerArgs{}
+	reply := CloseWorkerReply{}
+	log.Printf("CloseWorker调用 addr:%s, args:%v \n", workerAddr, args)
+	ok := callWorker(workerAddr, "WorkerInfo.CloseWorker", &args, &reply)
+	if ok && reply.Success {
+		return
+	}
+	log.Fatalf("CloseWorker调用失败 addr:%s, args:%v \n", workerAddr, args)
+	return
+}
+
 func callWorker(workerAddr, rpcName string, args interface{}, reply interface{}) bool {
 	defer func() {
 		anyError := recover()
 		if anyError != nil {
-			log.Printf("call worker error:%v", anyError)
+			log.Printf("call workers error:%v", anyError)
 		}
 	}()
 
@@ -249,7 +270,7 @@ func callWorker(workerAddr, rpcName string, args interface{}, reply interface{})
 
 	closeErr := c.Close()
 	if closeErr != nil {
-		log.Printf("worker: %s close error:%v", workerAddr, closeErr)
+		log.Printf("workers: %s close error:%v", workerAddr, closeErr)
 		return false
 	}
 

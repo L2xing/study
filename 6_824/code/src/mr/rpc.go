@@ -77,6 +77,14 @@ type ReduceDoneReply struct {
 	Success bool
 }
 
+// 6. Worker Close
+type CloseWorkerArgs struct {
+}
+
+type CloseWorkerReply struct {
+	Success bool
+}
+
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
 // Can't use the current directory since

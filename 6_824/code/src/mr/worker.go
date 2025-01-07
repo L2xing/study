@@ -160,6 +160,17 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 	return nil
 }
 
+func (w *WorkerInfo) CloseWorker(args *CloseWorkerArgs, reply *CloseWorkerReply) string {
+	go func() {
+		time.Sleep(time.Second * 2)
+		log.Println("worker关闭")
+		os.Exit(0)
+	}()
+	log.Printf("WorkerInfo.CloseWorker(%v)", args)
+	reply.Success = true
+	return ""
+}
+
 /**
  * 读取文件内容
  */
@@ -197,7 +208,7 @@ func CallRegister(addr string) {
 	call("Coordinator.Register", &args, &reply)
 
 	// reply.Y should be 100.
-	fmt.Printf("reply.Success %v\n", reply.Success)
+	log.Printf("reply.Success %v\n", reply.Success)
 }
 
 func CallMapDone(addr string, fileName string, shuffles map[string][]string) {
