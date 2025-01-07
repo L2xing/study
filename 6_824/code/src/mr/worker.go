@@ -59,7 +59,14 @@ type WorkerInfo struct {
 }
 
 func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
-	log.Printf("WorkerInfo.MapReq(%v)", args)
+	defer func() {
+		anyError := recover()
+		if anyError != nil {
+			log.Printf("WorkerInfo.MapReq error:%v\n", anyError)
+		}
+	}()
+
+	log.Printf("WorkerInfo.MapReq(%v)\n", args)
 
 	// 1. 读取file
 	fileName := args.FileName
@@ -119,7 +126,14 @@ func CreateShuffleFile(fileName string, kvs []KeyValue) {
 }
 
 func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error {
-	log.Printf("WorkerInfo.ReduceReq(%v)", args)
+	defer func() {
+		anyError := recover()
+		if anyError != nil {
+			log.Printf("WorkerInfo.MapReq error:%v\n", anyError)
+		}
+	}()
+
+	log.Printf("WorkerInfo.ReduceReq(%v)\n", args)
 	// 1. 将文件读入内存中
 	shuffles := make([]string, 0)
 	hashi := args.HashI
@@ -135,7 +149,6 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 		for _, lineStr := range lineStrArray {
 			kv := strings.Split(lineStr, " ")
 			if len(kv) != 2 {
-				log.Printf("异常的kv=%v\n", kv)
 				continue
 			}
 			_, ok := shuffleMaps[kv[0]]
