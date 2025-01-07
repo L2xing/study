@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,7 +34,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 	// 1. 启动一个server
 	log.Println("cli-server启动中")
-	worker := &WorkerInfo{mapf: mapf, reducef: reducef}
+	worker := &WorkerInfo{mapf: mapf, reducef: reducef, lock: &sync.Mutex{}, working: false}
 	workerServer(worker)
 	log.Println("cli-server启动，name=" + worker.Addr)
 
@@ -56,6 +57,8 @@ type WorkerInfo struct {
 	Addr    string
 	mapf    func(string, string) []KeyValue
 	reducef func(string, []string) string
+	working bool
+	lock    *sync.Mutex
 }
 
 func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
@@ -65,6 +68,8 @@ func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
 			log.Printf("WorkerInfo.MapReq error:%v\n", anyError)
 		}
 	}()
+	w.apply()
+	defer w.release()
 
 	log.Printf("WorkerInfo.MapReq(%v)\n", args)
 
@@ -103,6 +108,24 @@ func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
 	return nil
 }
 
+func (w *WorkerInfo) apply() bool {
+	w.lock.Lock()
+	defer w.lock.Unlock()
+	if w.working {
+		log.Printf("WorkerInfo.MapReq addr:%s 正在工作中，不处理\n", w.Addr)
+		return false
+	} else {
+		w.working = true
+		return true
+	}
+}
+
+func (w *WorkerInfo) release() {
+	w.lock.Lock()
+	defer w.lock.Unlock()
+	w.working = false
+}
+
 func CreateShuffleFile(fileName string, kvs []KeyValue) {
 	if len(kvs) == 0 {
 		return
@@ -132,6 +155,8 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 			log.Printf("WorkerInfo.MapReq error:%v\n", anyError)
 		}
 	}()
+	w.apply()
+	defer w.release()
 
 	log.Printf("WorkerInfo.ReduceReq(%v)\n", args)
 	// 1. 将文件读入内存中
@@ -162,6 +187,9 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 	// 2. 调用reducer
 	reduceOutPut := "mr-out-" + strconv.Itoa(hashi)
 	file, _ := os.Create(reduceOutPut)
+	dirnames, _ := file.Readdirnames(0)
+	dirName := strings.Join(dirnames, "/")
+	log.Printf("outputfile= %s\n", dirName+"/"+reduceOutPut)
 	for reduceKey, reduceValues := range shuffleMaps {
 		reduceResult := w.reducef(reduceKey, reduceValues)
 		fmt.Fprintf(file, "%s %s\n", reduceKey, reduceResult)

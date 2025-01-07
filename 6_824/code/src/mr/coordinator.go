@@ -158,17 +158,13 @@ func (c *Coordinator) handleMapReducer() {
 				}
 				continue
 			}
-
 			mapAllDone = false
-			break
 		}
 
 		if mapAllDone {
 			break
 		}
-
-		log.Println("in Mapping...")
-		time.Sleep(1 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	// 3. 开启reducer阶段
@@ -191,9 +187,7 @@ func (c *Coordinator) handleMapReducer() {
 				continue
 			}
 			allDone = false
-			break
 		}
-		log.Println("in Reduce...")
 		if allDone {
 			break
 		}
@@ -235,6 +229,7 @@ func ReduceReq(c *Coordinator, idx int) {
 		}()
 		reduceDone := CallReduceReq(worker, idx, shuffles)
 		if !reduceDone {
+			c.reducersCheckCnt[idx] = 0
 			return
 		} else {
 			c.reducersLock[idx].Lock()
@@ -265,10 +260,14 @@ func MapReq(c *Coordinator, fileName string) {
 				log.Printf("Recovered in MapReq: %v", r)
 			}
 		}()
-		shuffle := CallMapReq(worker, fileName, c.nReduce)
+		shuffle, ok := CallMapReq(worker, fileName, c.nReduce)
 		c.mappersLock[fileName].Lock()
 		defer c.mappersLock[fileName].Unlock()
-		c.mappers[fileName] = shuffle
+		if ok {
+			c.mappers[fileName] = shuffle
+		} else {
+			c.mapperCheckCnt[fileName] = 0
+		}
 	}(worker, fileName, c)
 }
 
@@ -291,16 +290,16 @@ func (c *Coordinator) applyWorker() string {
 // usually returns true.
 // returns false if something goes wrong.
 
-func CallMapReq(workerAddr, fileName string, nReduce int) string {
+func CallMapReq(workerAddr, fileName string, nReduce int) (string, bool) {
 	args := MapReqArgs{FileName: fileName, NReduce: nReduce}
 	reply := MapReqReply{}
 	log.Printf("Map调用 addr:%s, args:%v \n", workerAddr, args)
 	ok := callWorker(workerAddr, "WorkerInfo.MapReq", &args, &reply)
 	if ok && reply.Success {
-		return reply.Shuffle
+		return reply.Shuffle, true
 	}
 	log.Printf("Map调用失败 addr:%s, args:%v \n", workerAddr, args)
-	return ""
+	return "", false
 }
 
 func CallReduceReq(workerAddr string, hashI int, shuffles []string) bool {
