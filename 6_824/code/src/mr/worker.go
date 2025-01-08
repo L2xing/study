@@ -187,9 +187,6 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 	// 2. 调用reducer
 	reduceOutPut := "mr-out-" + strconv.Itoa(hashi)
 	file, _ := os.Create(reduceOutPut)
-	dirnames, _ := file.Readdirnames(0)
-	dirName := strings.Join(dirnames, "/")
-	log.Printf("outputfile= %s\n", dirName+"/"+reduceOutPut)
 	for reduceKey, reduceValues := range shuffleMaps {
 		reduceResult := w.reducef(reduceKey, reduceValues)
 		fmt.Fprintf(file, "%s %s\n", reduceKey, reduceResult)
