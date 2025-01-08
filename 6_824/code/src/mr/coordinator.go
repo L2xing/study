@@ -16,9 +16,8 @@ type Coordinator struct {
 	nReduce int
 
 	// mapper
-	mappers        map[string]string
-	mappersLock    map[string]*sync.Mutex
-	mapperCheckCnt map[string]int64
+	mappers     map[string]string
+	mappersLock map[string]*sync.Mutex
 
 	// ReducerKey
 	reducers          []bool
@@ -110,11 +109,9 @@ func InitCoordinator(files []string, nReduce int) *Coordinator {
 
 	// 1. 初始化mapper
 	c.mappers = make(map[string]string)
-	c.mapperCheckCnt = make(map[string]int64)
 	c.mappersLock = make(map[string]*sync.Mutex)
 	for _, file := range files {
 		c.mappers[file] = ""
-		c.mapperCheckCnt[file] = 0
 		c.mappersLock[file] = &sync.Mutex{}
 	}
 
@@ -140,7 +137,7 @@ func (c *Coordinator) handleMapReducer() {
 		if len(shuffle) > 0 {
 			continue
 		}
-		MapReq(c, fileName)
+		go MapReq(c, fileName)
 	}
 
 	// 2. 循环直到Map全部处理完毕
@@ -149,16 +146,11 @@ func (c *Coordinator) handleMapReducer() {
 		for fileName, shuffle := range c.mappers {
 			// todo map阶段确实存在 shuffle == 0
 			if len(shuffle) > 0 {
-				if c.mapperCheckCnt[fileName] > 0 {
-					// 重试检查减一
-					c.mapperCheckCnt[fileName]--
-				} else {
-					// 重试
-					MapReq(c, fileName)
-				}
-				continue
+				// 重试
+				go MapReq(c, fileName)
+			} else {
+				mapAllDone = false
 			}
-			mapAllDone = false
 		}
 
 		if mapAllDone {
@@ -240,7 +232,17 @@ func ReduceReq(c *Coordinator, idx int) {
 }
 
 func MapReq(c *Coordinator, fileName string) {
-	c.mappersLock[fileName].Lock()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered in MapReq: %v", r)
+		}
+	}()
+
+	// 尝试加锁
+	lock := c.mappersLock[fileName].TryLock()
+	if !lock {
+		return
+	}
 	defer c.mappersLock[fileName].Unlock()
 
 	// 1. 申请worker
@@ -250,25 +252,34 @@ func MapReq(c *Coordinator, fileName string) {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	// 2. 初始化mapper
-	c.mapperCheckCnt[fileName] = 5
-
 	// 3. 提交任务
-	go func(worker, fileName string, c *Coordinator) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Recovered in MapReq: %v", r)
+	CallFuncInTime(5*time.Second,
+		func() {
+			shuffle, ok := CallMapReq(worker, fileName, c.nReduce)
+			if ok {
+				c.mappers[fileName] = shuffle
 			}
-		}()
-		shuffle, ok := CallMapReq(worker, fileName, c.nReduce)
-		c.mappersLock[fileName].Lock()
-		defer c.mappersLock[fileName].Unlock()
-		if ok {
-			c.mappers[fileName] = shuffle
-		} else {
-			c.mapperCheckCnt[fileName] = 0
-		}
-	}(worker, fileName, c)
+		},
+		func() {
+			// 超时后解锁
+			log.Printf("MapReq: %v 调用超时", fileName)
+			c.mappersLock[fileName].Unlock()
+		})
+}
+
+func CallFuncInTime(d time.Duration, f func(), timeoutFunc func()) {
+	after := time.After(d)
+	anies := make(chan bool)
+	go func() {
+		f()
+		anies <- true
+	}()
+	select {
+	case <-after:
+		timeoutFunc()
+	case <-anies:
+		return
+	}
 }
 
 func (c *Coordinator) applyWorker() string {
