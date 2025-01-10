@@ -80,23 +80,24 @@ func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
 	//l, e := net.Listen("tcp", ":1234")
-	l := startUnixSocketServer4Coordinator()
-
-	go http.Serve(l, nil)
-}
-
-func startUnixSocketServer4Coordinator() net.Listener {
 	sockname := coordinatorSock()
 	os.Remove(sockname)
 	l, e := net.Listen("unix", sockname)
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	os.Remove(CoordinatorSockFile)
-	file, e := os.Create(CoordinatorSockFile)
-	file.WriteString(sockname)
-	file.Close()
-	return l
+
+	go http.Serve(l, nil)
+	WriteCoordinatorSock(sockname)
+}
+
+func WriteCoordinatorSock(sockname string) {
+	socknameFile := CoordinatorSockFile
+	os.Remove(socknameFile)
+
+	create, _ := os.Create(socknameFile)
+	create.WriteString(sockname)
+	create.Close()
 }
 
 // main/mrcoordinator.go calls Done() periodically to find out
