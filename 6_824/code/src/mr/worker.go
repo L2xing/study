@@ -152,7 +152,7 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 	defer func() {
 		anyError := recover()
 		if anyError != nil {
-			log.Printf("WorkerInfo.MapReq error:%v\n", anyError)
+			log.Printf("WorkerInfo.ReduceReq error:%v\n", anyError)
 		}
 	}()
 	w.apply()
@@ -198,15 +198,15 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 	return nil
 }
 
-func (w *WorkerInfo) CloseWorker(args *CloseWorkerArgs, reply *CloseWorkerReply) string {
+func (w *WorkerInfo) CloseWorker(args *CloseWorkerArgs, reply *CloseWorkerReply) error {
 	go func() {
-		time.Sleep(time.Second * 2)
+		time.Sleep(time.Second)
 		log.Println("worker关闭")
 		os.Exit(0)
 	}()
 	log.Printf("WorkerInfo.CloseWorker(%v)", args)
 	reply.Success = true
-	return ""
+	return nil
 }
 
 /**
@@ -244,9 +244,6 @@ func CallRegister(addr string) {
 
 	// send the RPC request, wait for the reply.
 	call("Coordinator.Register", &args, &reply)
-
-	// reply.Y should be 100.
-	log.Printf("reply.Success %v\n", reply.Success)
 }
 
 func CallMapDone(addr string, fileName string, shuffles map[string][]string) {
