@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -78,14 +79,24 @@ func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", ":1234")
-	// sockname := coordinatorSock()
-	// os.Remove(sockname)
-	// l, e := net.Listen("unix", sockname)
+	//l, e := net.Listen("tcp", ":1234")
+	l := startUnixSocketServer4Coordinator()
+
+	go http.Serve(l, nil)
+}
+
+func startUnixSocketServer4Coordinator() net.Listener {
+	sockname := coordinatorSock()
+	os.Remove(sockname)
+	l, e := net.Listen("unix", sockname)
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	go http.Serve(l, nil)
+	os.Remove(CoordinatorSockFile)
+	file, e := os.Create(CoordinatorSockFile)
+	file.WriteString(sockname)
+	file.Close()
+	return l
 }
 
 // main/mrcoordinator.go calls Done() periodically to find out
@@ -233,7 +244,6 @@ func ReduceReq(c *Coordinator, idx int) {
 	worker := c.applyWorker()
 	for strings.Compare(worker, "") == 0 {
 		worker = c.applyWorker()
-		time.Sleep(500 * time.Millisecond)
 	}
 
 	// 2. 合并shuffles
@@ -270,7 +280,6 @@ func MapReq(c *Coordinator, fileName string) {
 	worker := c.applyWorker()
 	for strings.Compare(worker, "") == 0 {
 		worker = c.applyWorker()
-		time.Sleep(500 * time.Millisecond)
 	}
 
 	// 3. 提交任务
@@ -305,6 +314,7 @@ func (c *Coordinator) applyWorker() string {
 	defer c.wLock.Unlock()
 	if len(c.workers) == 0 {
 		log.Println("no workers")
+		time.Sleep(500 * time.Millisecond)
 		return ""
 	}
 

@@ -33,7 +33,6 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 	// Your worker implementation here.
 	// 1. 启动一个server
-	log.Println("cli-server启动中")
 	worker := &WorkerInfo{mapf: mapf, reducef: reducef, lock: &sync.Mutex{}, working: false}
 	workerServer(worker)
 	log.Println("cli-server启动，name=" + worker.Addr)
@@ -278,9 +277,17 @@ func CallReduceDone(name string, output string) {
 // usually returns true.
 // returns false if something goes wrong.
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	// sockname := coordinatorSock()
-	// c, err := rpc.DialHTTP("unix", sockname)
+	//c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+
+	// 1. 开启socet连接
+	fileBytes, err := os.ReadFile(CoordinatorSockFile)
+	if err != nil {
+		log.Fatalf("coordinator.sock not exist")
+		return false
+	}
+	sockname := string(fileBytes)
+	c, err := rpc.DialHTTP("unix", sockname)
+
 	if err != nil {
 		log.Fatalf("coordinator can not connect")
 		return false
@@ -303,16 +310,23 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 
 // start a thread that listens for RPCs from worker.go
 func workerServer(worker *WorkerInfo) {
-	l, e := net.Listen("tcp", ":0")
-	// sockname := coordinatorSock()
-	// os.Remove(sockname)
-	// l, e := net.Listen("unix", sockname)
+	//l, e := net.Listen("tcp", ":0")
+	l, e := startUnixSocketServer()
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	addr := l.Addr().String()
-	worker.Addr = addr
+
 	rpc.Register(worker)
 	rpc.HandleHTTP()
 	go http.Serve(l, nil)
+
+	addr := l.Addr().String()
+	worker.Addr = addr
+}
+
+func startUnixSocketServer() (net.Listener, error) {
+	sockname := coordinatorSock()
+	os.Remove(sockname)
+	l, e := net.Listen("unix", sockname)
+	return l, e
 }

@@ -16,11 +16,6 @@ cd mr-tmp || exit 1
 rm -f mr-*
 
 # make sure software is freshly built.
-(cd ../../mrapps && go build $RACE -buildmode=plugin wc.go) || exit 1
-(cd ../../mrapps && go build $RACE -buildmode=plugin indexer.go) || exit 1
-(cd ../../mrapps && go build $RACE -buildmode=plugin mtiming.go) || exit 1
-(cd ../../mrapps && go build $RACE -buildmode=plugin rtiming.go) || exit 1
-(cd ../../mrapps && go build $RACE -buildmode=plugin jobcount.go) || exit 1
 (cd ../../mrapps && go build $RACE -buildmode=plugin early_exit.go) || exit 1
 (cd ../../mrapps && go build $RACE -buildmode=plugin crash.go) || exit 1
 (cd ../../mrapps && go build $RACE -buildmode=plugin nocrash.go) || exit 1
@@ -30,96 +25,96 @@ rm -f mr-*
 
 failed_any=0
 
-#########################################################
-# test whether any worker or coordinator exits before the
-# task has completed (i.e., all output files have been finalized)
-rm -f mr-*
-
-echo '***' Starting early exit test.
-
-timeout -k 2s 180s ../mrcoordinator ../pg*txt &
-
-# give the coordinator time to create the sockets.
-sleep 1
-
-# start multiple workers.
-timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-
-# wait for any of the coord or workers to exit
-# `jobs` ensures that any completed old processes from other tests
-# are not waited upon
-jobs &> /dev/null
-wait -n
-
-# a process has exited. this means that the output should be finalized
-# otherwise, either a worker or the coordinator exited early
-sort mr-out* | grep . > mr-wc-all-initial
-
-# wait for remaining workers and coordinator to exit.
-wait
-
-# compare initial and final outputs
-sort mr-out* | grep . > mr-wc-all-final
-if cmp mr-wc-all-final mr-wc-all-initial
-then
-  echo '---' early exit test: PASS
-else
-  echo '---' output changed after first worker exited
-  echo '---' early exit test: FAIL
-  failed_any=1
-fi
-rm -f mr-*
-
 ##########################################################
-#echo '***' Starting crash test.
+## test whether any worker or coordinator exits before the
+## task has completed (i.e., all output files have been finalized)
+#rm -f mr-*
 #
-## generate the correct output
-#../mrsequential ../../mrapps/nocrash.so ../pg*txt || exit 1
-#sort mr-out-0 > mr-correct-crash.txt
-#rm -f mr-out*
+#echo '***' Starting early exit test.
 #
-#rm -f mr-done
-#(timeout -k 2s 180s ../mrcoordinator ../pg*txt ; touch mr-done ) &
+#timeout -k 2s 180s ../mrcoordinator ../pg*txt &
+#
+## give the coordinator time to create the sockets.
 #sleep 1
 #
-## start multiple workers
-#timeout -k 2s 180s ../mrworker ../../mrapps/crash.so &
+## start multiple workers.
+#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
+#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
+#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
 #
-## mimic rpc.go's coordinatorSock()
-#SOCKNAME=/var/tmp/824-mr-`id -u`
+## wait for any of the coord or workers to exit
+## `jobs` ensures that any completed old processes from other tests
+## are not waited upon
+#jobs &> /dev/null
+#wait -n
 #
-#( while [ -e $SOCKNAME -a ! -f mr-done ]
-#  do
-#    timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-#    sleep 1
-#  done ) &
+## a process has exited. this means that the output should be finalized
+## otherwise, either a worker or the coordinator exited early
+#sort mr-out* | grep . > mr-wc-all-initial
 #
-#( while [ -e $SOCKNAME -a ! -f mr-done ]
-#  do
-#    timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-#    sleep 1
-#  done ) &
-#
-#while [ -e $SOCKNAME -a ! -f mr-done ]
-#do
-#  timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-#  sleep 1
-#done
-#
+## wait for remaining workers and coordinator to exit.
 #wait
 #
-#rm $SOCKNAME
-#sort mr-out* | grep . > mr-crash-all
-#if cmp mr-crash-all mr-correct-crash.txt
+## compare initial and final outputs
+#sort mr-out* | grep . > mr-wc-all-final
+#if cmp mr-wc-all-final mr-wc-all-initial
 #then
-#  echo '---' crash test: PASS
+#  echo '---' early exit test: PASS
 #else
-#  echo '---' crash output is not the same as mr-correct-crash.txt
-#  echo '---' crash test: FAIL
+#  echo '---' output changed after first worker exited
+#  echo '---' early exit test: FAIL
 #  failed_any=1
 #fi
+#rm -f mr-*
+
+#########################################################
+echo '***' Starting crash test.
+
+# generate the correct output
+../mrsequential ../../mrapps/nocrash.so ../pg*txt || exit 1
+sort mr-out-0 > mr-correct-crash.txt
+rm -f mr-out*
+
+rm -f mr-done
+(timeout -k 2s 180s ../mrcoordinator ../pg*txt ; touch mr-done ) &
+sleep 1
+
+# start multiple workers
+timeout -k 2s 180s ../mrworker ../../mrapps/crash.so &
+
+# mimic rpc.go's coordinatorSock()
+SOCKNAME=/var/tmp/824-mr-`id -u`
+
+( while [ -e $SOCKNAME -a ! -f mr-done ]
+  do
+    timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
+    sleep 1
+  done ) &
+
+( while [ -e $SOCKNAME -a ! -f mr-done ]
+  do
+    timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
+    sleep 1
+  done ) &
+
+while [ -e $SOCKNAME -a ! -f mr-done ]
+do
+  timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
+  sleep 1
+done
+
+wait
+
+rm $SOCKNAME
+sort mr-out* | grep . > mr-crash-all
+if cmp mr-crash-all mr-correct-crash.txt
+then
+  echo '---' crash test: PASS
+else
+  echo '---' crash output is not the same as mr-correct-crash.txt
+  echo '---' crash test: FAIL
+  failed_any=1
+fi
 
 #########################################################
 if [ $failed_any -eq 0 ]; then
