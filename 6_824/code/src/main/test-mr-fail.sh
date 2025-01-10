@@ -31,101 +31,46 @@ rm -f mr-*
 failed_any=0
 
 #########################################################
-echo '***' Starting map parallelism test.
-
+# test whether any worker or coordinator exits before the
+# task has completed (i.e., all output files have been finalized)
 rm -f mr-*
 
+echo '***' Starting early exit test.
+
 timeout -k 2s 180s ../mrcoordinator ../pg*txt &
+
+# give the coordinator time to create the sockets.
 sleep 1
 
-timeout -k 2s 180s ../mrworker ../../mrapps/mtiming.so &
-timeout -k 2s 180s ../mrworker ../../mrapps/mtiming.so
+# start multiple workers.
+timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
+timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
+timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
 
-NT=`cat mr-out* | grep '^times-' | wc -l | sed 's/ //g'`
-ECHO "NT=$NT"
-if [ "$NT" != "2" ]
-then
-  echo '---' saw "$NT" workers rather than 2
-  echo '---' map parallelism test: FAIL
-  failed_any=1
-fi
+# wait for any of the coord or workers to exit
+# `jobs` ensures that any completed old processes from other tests
+# are not waited upon
+jobs &> /dev/null
+wait -n
 
-if cat mr-out* | grep '^parallel.* 2' > /dev/null
-then
-  echo '---' map parallelism test: PASS
-else
-  echo '---' map workers did not run in parallel
-  echo '---' map parallelism test: FAIL
-  failed_any=1
-fi
+# a process has exited. this means that the output should be finalized
+# otherwise, either a worker or the coordinator exited early
+sort mr-out* | grep . > mr-wc-all-initial
 
+# wait for remaining workers and coordinator to exit.
 wait
 
-#
-##########################################################
-#echo '***' Starting reduce parallelism test.
-#
-#rm -f mr-*
-#
-#timeout -k 2s 180s ../mrcoordinator ../pg*txt &
-#sleep 1
-#
-#timeout -k 2s 180s ../mrworker ../../mrapps/rtiming.so &
-#timeout -k 2s 180s ../mrworker ../../mrapps/rtiming.so
-#
-#NT=`cat mr-out* | grep '^[a-z] 2' | wc -l | sed 's/ //g'`
-#if [ "$NT" -lt "2" ]
-#then
-#  echo '---' too few parallel reduces.
-#  echo '---' reduce parallelism test: FAIL
-#  failed_any=1
-#else
-#  echo '---' reduce parallelism test: PASS
-#fi
-#
-#wait
-
-##########################################################
-## test whether any worker or coordinator exits before the
-## task has completed (i.e., all output files have been finalized)
-#rm -f mr-*
-#
-#echo '***' Starting early exit test.
-#
-#timeout -k 2s 180s ../mrcoordinator ../pg*txt &
-#
-## give the coordinator time to create the sockets.
-#sleep 1
-#
-## start multiple workers.
-#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-#
-## wait for any of the coord or workers to exit
-## `jobs` ensures that any completed old processes from other tests
-## are not waited upon
-#jobs &> /dev/null
-#wait -n
-#
-## a process has exited. this means that the output should be finalized
-## otherwise, either a worker or the coordinator exited early
-#sort mr-out* | grep . > mr-wc-all-initial
-#
-## wait for remaining workers and coordinator to exit.
-#wait
-#
-## compare initial and final outputs
-#sort mr-out* | grep . > mr-wc-all-final
-#if cmp mr-wc-all-final mr-wc-all-initial
-#then
-#  echo '---' early exit test: PASS
-#else
-#  echo '---' output changed after first worker exited
-#  echo '---' early exit test: FAIL
-#  failed_any=1
-#fi
-#rm -f mr-*
+# compare initial and final outputs
+sort mr-out* | grep . > mr-wc-all-final
+if cmp mr-wc-all-final mr-wc-all-initial
+then
+  echo '---' early exit test: PASS
+else
+  echo '---' output changed after first worker exited
+  echo '---' early exit test: FAIL
+  failed_any=1
+fi
+rm -f mr-*
 
 ##########################################################
 #echo '***' Starting crash test.
