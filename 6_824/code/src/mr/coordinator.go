@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -226,7 +225,7 @@ func (c *Coordinator) handleMapReducer() {
 	c.retL.Lock()
 	defer c.retL.Unlock()
 	c.ret = true
-	fmt.Printf("All Done!\n")
+	log.Printf("All Done!\n")
 }
 
 func ReduceReq(c *Coordinator, idx int) {
