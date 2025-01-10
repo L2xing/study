@@ -277,34 +277,28 @@ func CallReduceDone(name string, output string) {
 // usually returns true.
 // returns false if something goes wrong.
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	//c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+	return callUnixSock(rpcname, args, reply)
+}
 
-	// 1. 开启socet连接
-	fileBytes, err := os.ReadFile(CoordinatorSockFile)
-	if err != nil {
-		log.Fatalf("coordinator.sock not exist")
-		return false
-	}
+func ReadCoordinatorSock() string {
+	fileBytes, _ := os.ReadFile(CoordinatorSockFile)
 	sockname := string(fileBytes)
+	return sockname
+}
+
+func callUnixSock(rpcname string, args interface{}, reply interface{}) bool {
+	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+	sockname := ReadCoordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
-
 	if err != nil {
-		log.Fatalf("coordinator can not connect")
-		return false
+		log.Fatal("dialing:", err)
 	}
-	log.Printf("调用master rpcName:%s \n", rpcname)
+	defer c.Close()
+
 	err = c.Call(rpcname, args, reply)
-
-	closeError := c.Close()
-	if closeError != nil {
-		log.Println("close error:", closeError)
-		return false
-	}
-
 	if err == nil {
 		return true
 	}
-	log.Printf("err: %v \n", err)
 	return false
 }
 
