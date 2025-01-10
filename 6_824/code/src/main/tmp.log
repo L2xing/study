@@ -1,0 +1,10 @@
+GNU bash, version 3.2.57(1)-release (arm64-apple-darwin24)
+Copyright (C) 2007 Free Software Foundation, Inc.
+=====
+=====
+*** Starting early exit test.
+当前时间是：2025-01-10 16:37:41
+当前时间是：2025-01-10 16:37:48
+--- output changed after first worker exited
+--- early exit test: FAIL
+*** FAILED SOME TESTS
