@@ -245,34 +245,6 @@ func CallRegister(addr string) {
 	call("Coordinator.Register", &args, &reply)
 }
 
-func CallMapDone(addr string, fileName string, shuffles map[string][]string) {
-	args := MapDoneArgs{}
-	args.Addr = addr
-	args.FileName = fileName
-	args.Shuffles = shuffles
-	reply := MapDoneReply{}
-	log.Printf("CallMapDone started. addr:%v, fileName:%v \n", args.Addr, args.FileName)
-	call("Coordinator.MapDone", &args, &reply)
-	log.Printf("CallMapDone reply. reply:%v \n", reply.Success)
-	if reply.Success == false {
-		time.Sleep(1 * time.Second)
-		log.Printf("CallMapDone Retry. fileName:%s \n", fileName)
-		CallMapDone("", fileName, shuffles)
-	}
-	log.Printf("CallMapDone finished. fileName:%s \n", fileName)
-}
-
-func CallReduceDone(name string, output string) {
-	args := ReduceDoneArgs{ShuffleName: name, Result: output}
-	reply := ReduceDoneReply{}
-	call("Coordinator.ReduceDone", &args, &reply)
-
-	if reply.Success == false {
-		time.Sleep(1 * time.Second)
-		CallReduceDone(name, output)
-	}
-}
-
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
