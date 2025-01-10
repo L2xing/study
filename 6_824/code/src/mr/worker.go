@@ -268,10 +268,10 @@ func callUnixSock(rpcname string, args interface{}, reply interface{}) bool {
 	defer c.Close()
 
 	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
+	if err != nil {
+		log.Printf("call fail:%v \n", err)
 	}
-	return false
+	return err == nil
 }
 
 // start a thread that listens for RPCs from worker.go
