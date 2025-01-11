@@ -148,4 +148,15 @@ if worker fail, then master restart task.
 >therefore our current implementation aborts the MapReduce computation
 > if the master fails. Clients can check for this condition
 > and retry the MapReduce operation if they desire.
-> 
+
+
+## 2. 如果Worker和Coordinator 是C/S架构
+Worker1 -> Coo
+Worker2 -> Coo
+Worker3 -> Coo
+
+如果worker1和worker2处理完成在Time1并通知Coo之后，其实数据已经稳定了。但是如果Worker3是一个延时节点在Time1之后还在进行数据写入并且在Time2完成。
+那么 Time1 < ----- > Time2 这段时间用户访问数据可能会有不一样的结果。
+目前解法感觉有两种：
+1. 将数据进行一次性写入 （简单）
+2. 实现一种Worker数据写入文件的lock能力
