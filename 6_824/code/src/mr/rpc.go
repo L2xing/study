@@ -23,16 +23,6 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
-
-// 1. 注册
-type RegisterArgs struct {
-	Msg string
-}
-
-type RegisterReply struct {
-	Success bool
-}
-
 type ApplyTaskArgs struct {
 }
 
@@ -50,17 +40,6 @@ type ApplyTaskReply struct {
 	// Command=3
 	ReduceIdx int
 	Shuffles  []string
-}
-
-// 2. Map Request
-type MapReqArgs struct {
-	FileName string
-	NReduce  int
-}
-
-type MapReqReply struct {
-	Shuffle string
-	Success bool
 }
 
 // 3. Map Done
@@ -93,5 +72,3 @@ func coordinatorSock() string {
 	s += strconv.Itoa(os.Getuid())
 	return s
 }
-
-var CoordinatorSockFile string = "coordinator.sock"

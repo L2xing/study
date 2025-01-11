@@ -78,12 +78,6 @@ type ReducerResult struct {
 }
 
 // Your code here -- RPC handlers for the workers to call.
-func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
-	log.Printf("Register: %s\n", args.Msg)
-	reply.Success = true
-	return nil
-}
-
 func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 	log.Printf("MapDone Receive. args: %v\n", args)
 	fileName := args.FileName
