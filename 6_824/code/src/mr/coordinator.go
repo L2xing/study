@@ -51,22 +51,7 @@ type ReducerResult struct {
 
 // Your code here -- RPC handlers for the workers to call.
 func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
-	c.wLock.Lock()
-	defer c.wLock.Unlock()
-
-	hasWorker := false
-	workerAddr := args.Addr
-	for _, addr := range c.workers {
-		if strings.Compare(addr, workerAddr) == 0 {
-			hasWorker = true
-		}
-	}
-
-	if !hasWorker {
-		log.Printf("register workers: %v", workerAddr)
-		c.workers = append(c.workers, workerAddr)
-	}
-
+	log.Printf("Register: %s\n", args.Msg)
 	reply.Success = true
 	return nil
 }
