@@ -326,7 +326,7 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskArgs, reply *ApplyTaskReply) erro
 		if timeout > curTimestamp {
 			continue
 		}
-		r.timeout = curTimestamp + int64(time.Second*5)
+		r.timeout = curTimestamp + 3
 
 		reply.Command = 1
 		reply.MapFileName = fileName
@@ -355,7 +355,7 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskArgs, reply *ApplyTaskReply) erro
 		if timeout > curTimestamp {
 			continue
 		}
-		rr.timeout = curTimestamp + int64(time.Second*5)
+		rr.timeout = curTimestamp + 3
 
 		reply.Command = 2
 		reply.ReduceIdx = idx
