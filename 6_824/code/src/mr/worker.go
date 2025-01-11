@@ -88,17 +88,13 @@ func CreateShuffleFile(fileName string, kvs []KeyValue) {
 	defer file.Close()
 
 	// 2. 追加内容
-	sb := strings.Builder{}
 	for _, kv := range kvs {
 		// todo 这个可能会遇到key或value中存在空格的数据
-		kvs := fmt.Sprintf("%s %s\n", kv.Key, kv.Value)
-		sb.WriteString(kvs)
+		_, err = fmt.Fprintf(file, "%s %s\n", kv.Key, kv.Value)
+		if err != nil {
+			log.Fatalf("Shuffle file err:%v", err)
+		}
 	}
-	_, err = fmt.Fprintf(file, sb.String())
-	if err != nil {
-		log.Fatalf("Shuffle file err:%v", err)
-	}
-
 }
 
 func (w *WorkerInfo) DoReduce(hashI int, shuffles []string) string {
@@ -128,15 +124,14 @@ func (w *WorkerInfo) DoReduce(hashI int, shuffles []string) string {
 	// 2. 调用reducer
 	reduceOutPut := "mr-out-" + strconv.Itoa(hashI)
 	file, _ := os.Create(reduceOutPut)
-	sb := strings.Builder{}
 	for reduceKey, reduceValues := range shuffleMaps {
 		reduceResult := w.reducef(reduceKey, reduceValues)
-		sb.WriteString(fmt.Sprintf("%s %s\n", reduceKey, reduceResult))
+		_, err := fmt.Fprintf(file, "%s %s\n", reduceKey, reduceResult)
+		if err != nil {
+			log.Fatalf("Reduce file err:%v", err)
+		}
 	}
-	_, err := fmt.Fprintf(file, sb.String())
-	if err != nil {
-		log.Fatalf("Reduce file err:%v", err)
-	}
+
 	return reduceOutPut
 }
 
@@ -171,13 +166,13 @@ func (w *WorkerInfo) MapReduce() {
 		case 0:
 			time.Sleep(1 * time.Second)
 		case 1:
+			log.Printf("worker开始Map\n")
 			shuffles := w.DoMap(taskReply.MapFileName, taskReply.NReduce)
 			CallMapDone(taskReply.MapFileName, shuffles)
-			log.Printf("worker开始Map\n")
 		case 2:
+			log.Printf("worker开始Reduce\n")
 			output := w.DoReduce(taskReply.ReduceIdx, taskReply.Shuffles)
 			CallReduceDone(taskReply.ReduceIdx, output)
-			log.Printf("worker开始Reduce\n")
 		default:
 			log.Fatalf("异常命令\n")
 		}
