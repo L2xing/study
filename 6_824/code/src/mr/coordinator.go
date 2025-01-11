@@ -73,16 +73,6 @@ func (c *Coordinator) server() {
 	}
 
 	go http.Serve(l, nil)
-	WriteCoordinatorSock(sockname)
-}
-
-func WriteCoordinatorSock(sockname string) {
-	socknameFile := CoordinatorSockFile
-	os.Remove(socknameFile)
-
-	create, _ := os.Create(socknameFile)
-	create.WriteString(sockname)
-	create.Close()
 }
 
 // main/mrcoordinator.go calls Done() periodically to find out
@@ -92,11 +82,6 @@ func (c *Coordinator) Done() bool {
 	defer c.retL.Unlock()
 	if !c.ret {
 		return false
-	}
-
-	// 1. 通知所有worker退出
-	for _, addr := range c.workers {
-		CallCloseWorker(addr)
 	}
 
 	return true
@@ -299,7 +284,6 @@ func (c *Coordinator) applyWorker() string {
 	c.wLock.Lock()
 	defer c.wLock.Unlock()
 	if len(c.workers) == 0 {
-		log.Println("no workers")
 		time.Sleep(500 * time.Millisecond)
 		return ""
 	}
@@ -338,18 +322,6 @@ func CallReduceReq(workerAddr string, hashI int, shuffles []string) bool {
 	}
 	log.Printf("Reduce调用失败 addr:%s, args:%v \n", workerAddr, args)
 	return false
-}
-
-func CallCloseWorker(workerAddr string) {
-	args := CloseWorkerArgs{}
-	reply := CloseWorkerReply{}
-	log.Printf("CloseWorker调用 addr:%s, args:%v \n", workerAddr, args)
-	ok := callWorker(workerAddr, "WorkerInfo.CloseWorker", &args, &reply)
-	if ok && reply.Success {
-		return
-	}
-	log.Printf("CloseWorker调用失败 addr:%s, args:%v \n", workerAddr, args)
-	return
 }
 
 func callWorker(workerAddr, rpcName string, args interface{}, reply interface{}) bool {

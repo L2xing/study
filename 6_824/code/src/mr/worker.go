@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
-	"net"
-	"net/http"
 	"net/rpc"
 	"os"
 	"strconv"
@@ -33,14 +31,12 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 	// Your worker implementation here.
 	// 1. 启动一个server
-	worker := &WorkerInfo{mapf: mapf, reducef: reducef, lock: &sync.Mutex{}, working: false}
-	workerServer(worker)
-	log.Println("cli-server启动，name=" + worker.Addr)
+	worker := &WorkerInfo{name: "worker", mapf: mapf, reducef: reducef, lock: &sync.Mutex{}, working: false}
 
 	// 2. 向server注册
 	go func() {
 		for {
-			CallRegister(worker.Addr)
+			CallRegister(worker.name)
 			time.Sleep(1 * time.Second)
 		}
 	}()
@@ -53,7 +49,7 @@ func Worker(mapf func(string, string) []KeyValue,
 }
 
 type WorkerInfo struct {
-	Addr    string
+	name    string
 	mapf    func(string, string) []KeyValue
 	reducef func(string, []string) string
 	working bool
@@ -74,33 +70,7 @@ func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
 
 	// 1. 读取file
 	fileName := args.FileName
-	fileContent, _ := ReadFile(fileName)
-
-	// 2. 调用map
-	kvs := w.mapf(fileName, fileContent)
-	log.Printf("map完成 fileName:%s \n", fileName)
-
-	// 3. 创建shuffle
-	// 3.1 kv结果分组
-	groupKVs := make([][]KeyValue, args.NReduce)
-	for idx := range groupKVs {
-		groupKVs[idx] = make([]KeyValue, 0)
-	}
-
-	for _, kv := range kvs {
-		key := kv.Key
-		hashI := ihash(key) % args.NReduce
-		groupKVs[hashI] = append(groupKVs[hashI], kv)
-	}
-	// todo shuffle的文件生成方式可能会hash碰撞
-	shuffleFilePrefix := "map_out_" + strconv.Itoa(ihash(fileName)) + "_"
-	for idx, kvs := range groupKVs {
-		if len(kvs) == 0 {
-			continue
-		}
-		shuffleFile := shuffleFilePrefix + strconv.Itoa(idx)
-		CreateShuffleFile(shuffleFile, kvs)
-	}
+	shuffleFilePrefix := w.DoMap(fileName, args.NReduce)
 
 	reply.Shuffle = shuffleFilePrefix
 	reply.Success = true
@@ -111,7 +81,7 @@ func (w *WorkerInfo) apply() bool {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 	if w.working {
-		log.Printf("WorkerInfo.MapReq addr:%s 正在工作中，不处理\n", w.Addr)
+		log.Printf("WorkerInfo.MapReq addr:%s 正在工作中，不处理\n", "12")
 		return false
 	} else {
 		w.working = true
@@ -197,17 +167,6 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 	return nil
 }
 
-func (w *WorkerInfo) CloseWorker(args *CloseWorkerArgs, reply *CloseWorkerReply) error {
-	go func() {
-		time.Sleep(time.Second)
-		log.Println("worker关闭")
-		os.Exit(0)
-	}()
-	log.Printf("WorkerInfo.CloseWorker(%v)", args)
-	reply.Success = true
-	return nil
-}
-
 /**
  * 读取文件内容
  */
@@ -230,37 +189,100 @@ func ReadFile(fileName string) (string, error) {
 // example function to show how to make an RPC call to the coordinator.
 //
 // the RPC argument and reply types are defined in rpc.go.
+func (w *WorkerInfo) MapReduce() {
+	for {
+		taskReply := CallApplyTask()
+		switch taskReply.Command {
+		case -1:
+			log.Printf("worker退出\n")
+			os.Exit(0)
+		case 0:
+			log.Printf("worker空闲\n")
+			time.Sleep(1 * time.Second)
+		case 1:
+			shuffles := w.DoMap(taskReply.MapFileName, taskReply.NReduce)
+			CallMapDone(shuffles)
+			log.Printf("worker开始Map\n")
+		case 2:
+			log.Printf("worker开始Reduce\n")
+		default:
+			log.Fatalf("异常命令\n")
+		}
+	}
+}
+
+func CallMapDone(shuffles string) {
+
+}
+
+func (w *WorkerInfo) DoMap(fileName string, nReduce int) string {
+	// 1. 读取file
+	fileContent, _ := ReadFile(fileName)
+
+	// 2. 调用map
+	kvs := w.mapf(fileName, fileContent)
+	log.Printf("map完成 fileName:%s \n", fileName)
+
+	// 3. 创建shuffle
+	// 3.1 kv结果分组
+	groupKVs := make([][]KeyValue, nReduce)
+	for idx := range groupKVs {
+		groupKVs[idx] = make([]KeyValue, 0)
+	}
+
+	for _, kv := range kvs {
+		key := kv.Key
+		hashI := ihash(key) % nReduce
+		groupKVs[hashI] = append(groupKVs[hashI], kv)
+	}
+	// todo shuffle的文件生成方式可能会hash碰撞
+	shuffleFilePrefix := "map_out_" + strconv.Itoa(ihash(fileName)) + "_"
+	for idx, kvs := range groupKVs {
+		if len(kvs) == 0 {
+			continue
+		}
+		shuffleFile := shuffleFilePrefix + strconv.Itoa(idx)
+		CreateShuffleFile(shuffleFile, kvs)
+	}
+
+	return shuffleFilePrefix
+}
+
+func CallApplyTask() *ApplyTaskReply {
+	args := ApplyTaskArgs{}
+	reply := ApplyTaskReply{}
+	// send the RPC request, wait for the reply.
+	call("Coordinator.ApplyTask", &args, &reply)
+	if !reply.Success {
+		log.Printf("reply fail:%v \n", reply)
+		return &ApplyTaskReply{Command: 0}
+	}
+	log.Printf("reply:%v \n", reply)
+	return &reply
+}
 
 func CallRegister(addr string) {
 	// declare an argument structure.
 	args := RegisterArgs{}
 
 	// fill in the argument(s).
-	args.Addr = addr
+	args.Msg = addr
 
 	// declare a reply structure.
 	reply := RegisterReply{}
 
 	// send the RPC request, wait for the reply.
 	call("Coordinator.Register", &args, &reply)
+
+	log.Printf("reply:%v \n", reply)
 }
 
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	return callUnixSock(rpcname, args, reply)
-}
-
-func ReadCoordinatorSock() string {
-	fileBytes, _ := os.ReadFile(CoordinatorSockFile)
-	sockname := string(fileBytes)
-	return sockname
-}
-
-func callUnixSock(rpcname string, args interface{}, reply interface{}) bool {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := ReadCoordinatorSock()
+	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
 		log.Fatal("dialing:", err)
@@ -272,27 +294,4 @@ func callUnixSock(rpcname string, args interface{}, reply interface{}) bool {
 		log.Printf("call fail:%v \n", err)
 	}
 	return err == nil
-}
-
-// start a thread that listens for RPCs from worker.go
-func workerServer(worker *WorkerInfo) {
-	//l, e := net.Listen("tcp", ":0")
-	l, e := startUnixSocketServer()
-	if e != nil {
-		log.Fatal("listen error:", e)
-	}
-
-	rpc.Register(worker)
-	rpc.HandleHTTP()
-	go http.Serve(l, nil)
-
-	addr := l.Addr().String()
-	worker.Addr = addr
-}
-
-func startUnixSocketServer() (net.Listener, error) {
-	sockname := coordinatorSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
-	return l, e
 }
