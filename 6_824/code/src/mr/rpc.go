@@ -54,8 +54,9 @@ type MapDoneReply struct {
 
 // 4. Reduce Done
 type ReduceDoneArgs struct {
-	HashI   int
-	Success bool
+	HashI      int
+	OutputFile string
+	Success    bool
 }
 
 type ReduceDoneReply struct {

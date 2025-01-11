@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -74,6 +75,7 @@ type ReducerParam struct {
 
 type ReducerResult struct {
 	idx     int
+	output  string
 	success bool
 }
 
@@ -89,7 +91,7 @@ func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
 
 func (c *Coordinator) ReduceDone(args *ReduceDoneArgs, reply *ReduceDoneReply) error {
 	log.Printf("ReduceDone Receive. args: %v\n", args)
-	c.reducersResultChan <- ReducerResult{args.HashI, true}
+	c.reducersResultChan <- ReducerResult{args.HashI, args.OutputFile, true}
 	reply.Success = true
 	return nil
 }
@@ -216,6 +218,12 @@ func (c *Coordinator) listenMapperResult() {
 
 		// 2. shuffle存储
 		fileName := mr.FileName
+
+		// 已经处理过了
+		if c.mappers[fileName].done {
+			continue
+		}
+
 		shuffle := mr.Shuffle
 		c.mappers[fileName] = &MapResult{true, shuffle, 0}
 		log.Printf("MapReq: %s 完成, shuffle: %s\n", fileName, shuffle)
@@ -223,10 +231,7 @@ func (c *Coordinator) listenMapperResult() {
 		// 3. 检查是否全部完成
 		allDone := true
 		for _, r := range c.mappers {
-			if !r.done {
-				allDone = false
-				break
-			}
+			allDone = allDone && r.done
 		}
 		if allDone {
 			break
@@ -252,15 +257,45 @@ func (c *Coordinator) listenReducerResult() {
 
 		// 2. reducer标记
 		idx := rr.idx
+
+		// 已经处理过了
+		if c.reducers[idx].done {
+			log.Printf("Reduce already Done!\n")
+			continue
+		}
+
+		// 放到最终的文件
+		// 读取临时文件
+		tmpOutput := rr.output
+		tmpFileBytes, err := os.ReadFile(tmpOutput)
+		if err != nil {
+			log.Printf("ReadFile error: %v\n", err)
+		}
+		os.Remove(tmpOutput)
+
+		// 写入最终文件
+		finalOutPut := "mr-out-" + strconv.Itoa(rr.idx)
+		finalFile, err := os.Create(finalOutPut)
+		if err != nil {
+			log.Fatalf("os.Create(%s) failed.\n", finalOutPut)
+		}
+		log.Printf("Writing to %s, len:%d\n", rr.output, len(tmpFileBytes))
+
+		n, err := finalFile.Write(tmpFileBytes)
+		if err != nil {
+			log.Fatalf("finalFile.Write(%s) failed. %v\n", finalOutPut, err)
+		}
+		if n != len(tmpFileBytes) {
+			log.Fatalf("n != len(tmpFileBytes) finalFile.Write(%s) failed.\n", finalOutPut)
+		}
+		finalFile.Close()
+
 		c.reducers[idx] = &ReduceResult{true, 0}
 
 		// 3. 检查是否全部完成
 		allDone := true
 		for _, rr := range c.reducers {
-			if !rr.done {
-				allDone = false
-				break
-			}
+			allDone = allDone && rr.done
 		}
 		if allDone {
 			break
@@ -268,7 +303,7 @@ func (c *Coordinator) listenReducerResult() {
 	}
 
 	// 4. 通知完成
-	log.Printf("ReduceDone!\n")
+	log.Printf("ReduceDone! %v\n", c.reducers)
 	c.reducerDone <- true
 }
 
@@ -278,10 +313,12 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskArgs, reply *ApplyTaskReply) erro
 	reply.Success = true
 
 	// 1. mapper 任务分发
+	mapAllDone := true
 	for fileName, r := range c.mappers {
 		if r.done {
 			continue
 		}
+		mapAllDone = false
 
 		// 1. 短期内不允许重试
 		timeout := r.timeout
@@ -297,12 +334,20 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskArgs, reply *ApplyTaskReply) erro
 		return nil
 	}
 
+	if !mapAllDone {
+		reply.Command = 0
+		return nil
+	}
+
 	// 2. reducer 任务分发
+	reduceAllDone := true
+
 	shuffles := c.getAllShuffles()
 	for idx, rr := range c.reducers {
 		if rr.done {
 			continue
 		}
+		reduceAllDone = false
 
 		// 防止重试
 		timeout := rr.timeout
@@ -315,6 +360,10 @@ func (c *Coordinator) ApplyTask(args *ApplyTaskArgs, reply *ApplyTaskReply) erro
 		reply.Command = 2
 		reply.ReduceIdx = idx
 		reply.Shuffles = shuffles
+		return nil
+	}
+	if !reduceAllDone {
+		reply.Command = 0
 		return nil
 	}
 

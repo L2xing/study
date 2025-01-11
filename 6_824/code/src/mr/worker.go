@@ -122,7 +122,7 @@ func (w *WorkerInfo) DoReduce(hashI int, shuffles []string) string {
 	}
 
 	// 2. 调用reducer
-	reduceOutPut := "mr-out-" + strconv.Itoa(hashI)
+	reduceOutPut := "tmp-mr-out-" + strconv.Itoa(hashI)
 	file, _ := os.Create(reduceOutPut)
 	for reduceKey, reduceValues := range shuffleMaps {
 		reduceResult := w.reducef(reduceKey, reduceValues)
@@ -170,7 +170,7 @@ func (w *WorkerInfo) MapReduce() {
 			shuffles := w.DoMap(taskReply.MapFileName, taskReply.NReduce)
 			CallMapDone(taskReply.MapFileName, shuffles)
 		case 2:
-			log.Printf("worker开始Reduce\n")
+			log.Printf("worker开始Reduce. i:%d\n", taskReply.ReduceIdx)
 			output := w.DoReduce(taskReply.ReduceIdx, taskReply.Shuffles)
 			CallReduceDone(taskReply.ReduceIdx, output)
 		default:
@@ -180,7 +180,7 @@ func (w *WorkerInfo) MapReduce() {
 }
 
 func CallReduceDone(idx int, output string) {
-	args := ReduceDoneArgs{idx, true}
+	args := ReduceDoneArgs{idx, output, true}
 	reply := ReduceDoneReply{}
 	success := call("Coordinator.ReduceDone", &args, &reply)
 	if !success || !reply.Success {
