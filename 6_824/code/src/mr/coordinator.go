@@ -279,7 +279,6 @@ func (c *Coordinator) listenReducerResult() {
 		if err != nil {
 			log.Fatalf("os.Create(%s) failed.\n", finalOutPut)
 		}
-		log.Printf("Writing to %s, len:%d\n", rr.output, len(tmpFileBytes))
 
 		n, err := finalFile.Write(tmpFileBytes)
 		if err != nil {

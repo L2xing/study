@@ -150,7 +150,9 @@ if worker fail, then master restart task.
 > and retry the MapReduce operation if they desire.
 
 
-## 2. 如果Worker和Coordinator 是C/S架构
+## 2. 如果Worker和Coordinator 是C/S架构 （early_exist）
+本质其实就是early_exist问题的子集。
+
 Worker1 -> Coo
 Worker2 -> Coo
 Worker3 -> Coo
