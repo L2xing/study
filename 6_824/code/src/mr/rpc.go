@@ -26,11 +26,30 @@ type ExampleReply struct {
 
 // 1. 注册
 type RegisterArgs struct {
-	Addr string
+	Msg string
 }
 
 type RegisterReply struct {
 	Success bool
+}
+
+type ApplyTaskArgs struct {
+}
+
+type ApplyTaskReply struct {
+	// true时下面才都有效
+	Success bool
+
+	// -1=close 0=wait 1.map 2.reduce
+	Command int
+
+	// Command=2
+	MapFileName string
+	NReduce     int
+
+	// Command=3
+	ReduceIdx int
+	Shuffles  []string
 }
 
 // 2. Map Request
@@ -65,24 +84,6 @@ type ReduceReqReply struct {
 	HashI      int
 	OutPutFile string
 	Success    bool
-}
-
-// 5. Map Done
-type ReduceDoneArgs struct {
-	ShuffleName string
-	Result      string
-}
-
-type ReduceDoneReply struct {
-	Success bool
-}
-
-// 6. Worker Close
-type CloseWorkerArgs struct {
-}
-
-type CloseWorkerReply struct {
-	Success bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name
