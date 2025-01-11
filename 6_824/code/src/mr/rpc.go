@@ -65,25 +65,22 @@ type MapReqReply struct {
 
 // 3. Map Done
 type MapDoneArgs struct {
-	Addr     string
 	FileName string
-	Shuffles map[string][]string
+	Shuffles string
 }
 
 type MapDoneReply struct {
 	Success bool
 }
 
-// 4. Reduce Request
-type ReduceReqArgs struct {
-	HashI    int
-	Shuffles []string
+// 4. Reduce Done
+type ReduceDoneArgs struct {
+	HashI   int
+	Success bool
 }
 
-type ReduceReqReply struct {
-	HashI      int
-	OutPutFile string
-	Success    bool
+type ReduceDoneReply struct {
+	Success bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name

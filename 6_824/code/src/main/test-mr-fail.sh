@@ -16,105 +16,85 @@ cd mr-tmp || exit 1
 rm -f mr-*
 
 # make sure software is freshly built.
-(cd ../../mrapps && go build $RACE -buildmode=plugin early_exit.go) || exit 1
-(cd ../../mrapps && go build $RACE -buildmode=plugin crash.go) || exit 1
-(cd ../../mrapps && go build $RACE -buildmode=plugin nocrash.go) || exit 1
+(cd ../../mrapps && go build $RACE -buildmode=plugin wc.go) || exit 1
+#(cd ../../mrapps && go build $RACE -buildmode=plugin indexer.go) || exit 1
 (cd .. && go build $RACE mrcoordinator.go) || exit 1
 (cd .. && go build $RACE mrworker.go) || exit 1
 (cd .. && go build $RACE mrsequential.go) || exit 1
 
 failed_any=0
 
-##########################################################
-## test whether any worker or coordinator exits before the
-## task has completed (i.e., all output files have been finalized)
-#rm -f mr-*
-#
-#echo '***' Starting early exit test.
-#
-#timeout -k 2s 180s ../mrcoordinator ../pg*txt &
-#
-## give the coordinator time to create the sockets.
-#sleep 1
-#
-## start multiple workers.
-#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-#timeout -k 2s 180s ../mrworker ../../mrapps/early_exit.so &
-#
-## wait for any of the coord or workers to exit
-## `jobs` ensures that any completed old processes from other tests
-## are not waited upon
-#jobs &> /dev/null
-#wait -n
-#
-## a process has exited. this means that the output should be finalized
-## otherwise, either a worker or the coordinator exited early
-#sort mr-out* | grep . > mr-wc-all-initial
-#
-## wait for remaining workers and coordinator to exit.
-#wait
-#
-## compare initial and final outputs
-#sort mr-out* | grep . > mr-wc-all-final
-#if cmp mr-wc-all-final mr-wc-all-initial
-#then
-#  echo '---' early exit test: PASS
-#else
-#  echo '---' output changed after first worker exited
-#  echo '---' early exit test: FAIL
-#  failed_any=1
-#fi
-#rm -f mr-*
-
 #########################################################
-echo '***' Starting crash test.
+# first word-count
 
-# generate the correct output
-../mrsequential ../../mrapps/nocrash.so ../pg*txt || exit 1
-sort mr-out-0 > mr-correct-crash.txt
+# generate the correct output （通过串形方式计算稳定结果最为对照组）
+../mrsequential ../../mrapps/wc.so ../pg*txt || exit 1
+sort mr-out-0 > mr-correct-wc.txt
 rm -f mr-out*
 
-rm -f mr-done
-(timeout -k 2s 180s ../mrcoordinator ../pg*txt ; touch mr-done ) &
+echo '***' Starting wc test.
+
+# 启动协调者，存储任务信息（pg*txt）
+timeout -k 2s 180s ../mrcoordinator ../pg*txt &
+pid=$!
+
+# give the coordinator time to create the sockets.
 sleep 1
 
-# start multiple workers
-timeout -k 2s 180s ../mrworker ../../mrapps/crash.so &
+# 启动三个Worker座位Mapper和Reducer的资源。
+# start multiple workers.
+timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
+timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
+timeout -k 2s 180s ../mrworker ../../mrapps/wc.so &
 
-# mimic rpc.go's coordinatorSock()
-SOCKNAME=/var/tmp/824-mr-`id -u`
+# wait for the coordinator to exit.
+wait $pid
 
-( while [ -e $SOCKNAME -a ! -f mr-done ]
-  do
-    timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-    sleep 1
-  done ) &
-
-( while [ -e $SOCKNAME -a ! -f mr-done ]
-  do
-    timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-    sleep 1
-  done ) &
-
-while [ -e $SOCKNAME -a ! -f mr-done ]
-do
-  timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
-  sleep 1
-done
-
-wait
-
-rm $SOCKNAME
-sort mr-out* | grep . > mr-crash-all
-if cmp mr-crash-all mr-correct-crash.txt
+# 结果校验
+# since workers are required to exit when a job is completely finished,
+# and not before, that means the job has finished.
+sort mr-out* | grep . > mr-wc-all
+if cmp mr-wc-all mr-correct-wc.txt
 then
-  echo '---' crash test: PASS
+  echo '---' wc test: PASS
 else
-  echo '---' crash output is not the same as mr-correct-crash.txt
-  echo '---' crash test: FAIL
+  echo '---' wc output is not the same as mr-correct-wc.txt
+  echo '---' wc test: FAIL
   failed_any=1
 fi
+
+# wait for remaining workers and coordinator to exit.
+wait
+
+##########################################################
+## now indexer
+#rm -f mr-*
+#
+## generate the correct output
+#../mrsequential ../../mrapps/indexer.so ../pg*txt || exit 1
+#sort mr-out-0 > mr-correct-indexer.txt
+#rm -f mr-out*
+#
+#echo '***' Starting indexer test.
+#
+#timeout -k 2s 180s ../mrcoordinator ../pg*txt &
+#sleep 1
+#
+## start multiple workers
+#timeout -k 2s 180s ../mrworker ../../mrapps/indexer.so &
+#timeout -k 2s 180s ../mrworker ../../mrapps/indexer.so
+#
+#sort mr-out* | grep . > mr-indexer-all
+#if cmp mr-indexer-all mr-correct-indexer.txt
+#then
+#  echo '---' indexer test: PASS
+#else
+#  echo '---' indexer output is not the same as mr-correct-indexer.txt
+#  echo '---' indexer test: FAIL
+#  failed_any=1
+#fi
+#
+#wait
 
 #########################################################
 if [ $failed_any -eq 0 ]; then

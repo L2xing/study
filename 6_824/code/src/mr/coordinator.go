@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -15,33 +14,62 @@ type Coordinator struct {
 	// Your definitions here.
 	files   []string
 	nReduce int
+	apply   sync.Mutex
 
 	// mapper
-	mappers     map[string]string
-	mappersChan chan MapperResult
-	mapperDone  chan bool
+	mappers           map[string]*MapResult
+	mappersParamChan  chan MapperParam
+	mappersResultChan chan MapperResult
+	mapperDone        chan bool
 
-	// ReducerKey
-	reducers     []bool
-	reducersChan chan ReducerResult
-	reduceDone   chan bool
+	// reducer
+	reducers           []*ReduceResult
+	reducersParamChan  chan ReducerParam
+	reducersResultChan chan ReducerResult
+	reducerDone        chan bool
 
 	reducerFilePrefix string
-
-	// workers
-	wLock   sync.Mutex
-	workers []string
-	curIdx  int
 
 	// ret
 	retL sync.Mutex
 	ret  bool
 }
 
+type MapResult struct {
+	done    bool
+	shuffle string
+	timeout int64
+}
+
+type ReduceResult struct {
+	done    bool
+	timeout int64
+}
+
+type TaskReq struct {
+	MapperParam
+	ReducerParam
+}
+
+type TaskResult struct {
+	mr MapperResult
+	rr ReducerResult
+}
+
+type MapperParam struct {
+	FileName string
+	NReduce  int
+}
+
 type MapperResult struct {
 	FileName string
 	Shuffle  string
 	success  bool
+}
+
+type ReducerParam struct {
+	ReduceIdx int
+	Shuffles  []string
 }
 
 type ReducerResult struct {
@@ -57,6 +85,18 @@ func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 }
 
 func (c *Coordinator) MapDone(args *MapDoneArgs, reply *MapDoneReply) error {
+	log.Printf("MapDone Receive. args: %v\n", args)
+	fileName := args.FileName
+	shuffles := args.Shuffles
+	c.mappersResultChan <- MapperResult{fileName, shuffles, true}
+	reply.Success = true
+	return nil
+}
+
+func (c *Coordinator) ReduceDone(args *ReduceDoneArgs, reply *ReduceDoneReply) error {
+	log.Printf("ReduceDone Receive. args: %v\n", args)
+	c.reducersResultChan <- ReducerResult{args.HashI, true}
+	reply.Success = true
 	return nil
 }
 
@@ -69,7 +109,7 @@ func (c *Coordinator) server() {
 	os.Remove(sockname)
 	l, e := net.Listen("unix", sockname)
 	if e != nil {
-		log.Fatal("listen error:", e)
+		log.Fatal("listenMapperResult error:", e)
 	}
 
 	go http.Serve(l, nil)
@@ -101,107 +141,58 @@ func InitCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 	c.files = files
 	c.nReduce = nReduce
+	//c.taskChan = make(chan TaskReq, 1)
 
 	// 1. 初始化mapper
-	c.mappers = make(map[string]string)
-	c.mappersChan = make(chan MapperResult, 1)
+	c.mappers = make(map[string]*MapResult)
+	c.mappersParamChan = make(chan MapperParam, 1)
+	c.mappersResultChan = make(chan MapperResult, 1)
 	c.mapperDone = make(chan bool)
 	for _, file := range files {
-		c.mappers[file] = ""
+		c.mappers[file] = &MapResult{}
 	}
 
 	// 2. 初始化reducer
-	c.reducers = make([]bool, nReduce)
-	c.reducersChan = make(chan ReducerResult, 1)
-	c.reduceDone = make(chan bool, 1)
+	c.reducers = make([]*ReduceResult, nReduce)
+	c.reducersParamChan = make(chan ReducerParam, 1)
+	c.reducersResultChan = make(chan ReducerResult, 1)
+	c.reducerDone = make(chan bool, 1)
 	for idx := range c.reducers {
-		c.reducers[idx] = false
+		c.reducers[idx] = &ReduceResult{}
 	}
 	c.reducerFilePrefix = "mr-out"
 
-	go c.handleMapReducer()
+	go c.listenerMapReducer()
 
 	return &c
 }
 
-func (c *Coordinator) handleMapReducer() {
-	// 1. 提交Map任务
-	for fileName, shuffle := range c.mappers {
-		if len(shuffle) > 0 {
-			continue
-		}
-		go MapReq(c, fileName)
-	}
+func (c *Coordinator) listenerMapReducer() {
+	// 1. Mapper Done Listener
+	go c.listenMapperResult()
 
+	// 2. Reducer Done Listener
+	go c.listenReducerResult()
+
+	// 3. 开始投递Mapper
 	go func(c *Coordinator) {
-		for {
-			mr := <-c.mappersChan
-			if !mr.success {
-				log.Printf("MapReq: %s 失败重试\n", mr.FileName)
-				go MapReq(c, mr.FileName)
-				continue
-			}
-
-			fileName := mr.FileName
-			shuffle := mr.Shuffle
-			c.mappers[fileName] = shuffle
-			log.Printf("MapReq: %s 完成, shuffle: %s\n", fileName, shuffle)
-
-			// 2. 检查是否全部完成
-			allDone := true
-			for _, shuffle := range c.mappers {
-				if len(shuffle) == 0 {
-					allDone = false
-					break
-				}
-			}
-			if allDone {
-				break
-			}
+		for _, fileName := range c.files {
+			c.mappersParamChan <- MapperParam{fileName, c.nReduce}
+			log.Printf("MapReducer Listener...: %s\n", fileName)
 		}
-
-		log.Printf("MapDone!\n")
-		c.mapperDone <- true
 	}(c)
 
-	// 2. 循环直到Map全部处理完毕
+	// 2. Mapper
 	<-c.mapperDone
 
-	// 3. 开启reducer阶段
-	for idx := range c.reducers {
-		go ReduceReq(c, idx)
-	}
-
 	go func(c *Coordinator) {
-		for {
-			rr := <-c.reducersChan
-			if !rr.success {
-				log.Printf("ReduceReq: %v 失败重试\n", rr.idx)
-				go ReduceReq(c, rr.idx)
-				continue
-			}
-
-			idx := rr.idx
-			c.reducers[idx] = true
-
-			// 4. 检查是否全部完成
-			allDone := true
-			for _, done := range c.reducers {
-				if !done {
-					allDone = false
-					break
-				}
-			}
-			if allDone {
-				break
-			}
+		shuffles := c.getAllShuffles()
+		for i := 0; i < c.nReduce; i++ {
+			c.reducersParamChan <- ReducerParam{i, shuffles}
 		}
-		log.Printf("ReduceDone!\n")
-		c.reduceDone <- true
 	}(c)
 
-	// 4. reducer验证
-	<-c.reduceDone
+	<-c.reducerDone
 
 	// 5. 通知coordinator完成
 	c.retL.Lock()
@@ -210,148 +201,136 @@ func (c *Coordinator) handleMapReducer() {
 	log.Printf("All Done!\n")
 }
 
-func ReduceReq(c *Coordinator, idx int) {
-	// 1. 申请worker
-	worker := c.applyWorker()
-	for strings.Compare(worker, "") == 0 {
-		worker = c.applyWorker()
-	}
-
-	// 2. 合并shuffles
+func (c *Coordinator) getAllShuffles() []string {
 	shuffles := make([]string, 0)
-	for _, shuffle := range c.mappers {
-		shuffles = append(shuffles, shuffle)
+	for _, r := range c.mappers {
+		shuffles = append(shuffles, r.shuffle)
 	}
-
-	// 4. 提交任务
-	CallFuncInTime(5*time.Second,
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("Recovered in ReduceReq: %v", r)
-				}
-			}()
-			reduceDone := CallReduceReq(worker, idx, shuffles)
-			c.reducersChan <- ReducerResult{idx, reduceDone}
-		},
-		func() {
-			log.Printf("ReduceReq: %v 调用超时", idx)
-			c.reducersChan <- ReducerResult{idx, false}
-		})
+	return shuffles
 }
 
-func MapReq(c *Coordinator, fileName string) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Recovered in MapReq: %v", r)
+func (c *Coordinator) listenMapperResult() {
+	for {
+		mr := <-c.mappersResultChan
+
+		// 1. 异常重试
+		if !mr.success {
+			log.Printf("mapper retry error: %v\n", mr)
+			c.mappersParamChan <- MapperParam{mr.FileName, c.nReduce}
+			continue
 		}
-	}()
 
-	// 1. 申请worker
-	worker := c.applyWorker()
-	for strings.Compare(worker, "") == 0 {
-		worker = c.applyWorker()
+		// 2. shuffle存储
+		fileName := mr.FileName
+		shuffle := mr.Shuffle
+		c.mappers[fileName] = &MapResult{true, shuffle, 0}
+		log.Printf("MapReq: %s 完成, shuffle: %s\n", fileName, shuffle)
+
+		// 3. 检查是否全部完成
+		allDone := true
+		for _, r := range c.mappers {
+			if !r.done {
+				allDone = false
+				break
+			}
+		}
+		if allDone {
+			break
+		}
 	}
 
-	// 3. 提交任务
-	CallFuncInTime(5*time.Second,
-		func() {
-			shuffle, ok := CallMapReq(worker, fileName, c.nReduce)
-			c.mappersChan <- MapperResult{fileName, shuffle, ok}
-		},
-		func() {
-			log.Printf("MapReq: %v 调用超时", fileName)
-			c.mappersChan <- MapperResult{fileName, "", false}
-		})
+	// 4. 处理完成
+	log.Printf("MapDone!\n")
+	c.mapperDone <- true
 }
 
-func CallFuncInTime(d time.Duration, f func(), timeoutFunc func()) {
-	after := time.After(d)
-	anies := make(chan bool)
-	go func() {
-		f()
-		anies <- true
-	}()
-	select {
-	case <-after:
-		timeoutFunc()
-	case <-anies:
-		return
+func (c *Coordinator) listenReducerResult() {
+	for {
+		rr := <-c.reducersResultChan
+
+		// 1. 异常重试
+		if !rr.success {
+			log.Printf("reducer retry. error: %v\n", rr)
+			shuffles := c.getAllShuffles()
+			c.reducersParamChan <- ReducerParam{rr.idx, shuffles}
+			continue
+		}
+
+		// 2. reducer标记
+		idx := rr.idx
+		c.reducers[idx] = &ReduceResult{true, 0}
+
+		// 3. 检查是否全部完成
+		allDone := true
+		for _, rr := range c.reducers {
+			if !rr.done {
+				allDone = false
+				break
+			}
+		}
+		if allDone {
+			break
+		}
 	}
+
+	// 4. 通知完成
+	log.Printf("ReduceDone!\n")
+	c.reducerDone <- true
 }
 
-func (c *Coordinator) applyWorker() string {
-	c.wLock.Lock()
-	defer c.wLock.Unlock()
-	if len(c.workers) == 0 {
-		time.Sleep(500 * time.Millisecond)
-		return ""
+func (c *Coordinator) ApplyTask(args *ApplyTaskArgs, reply *ApplyTaskReply) error {
+	c.apply.Lock()
+	defer c.apply.Unlock()
+	reply.Success = true
+
+	// 1. mapper 任务分发
+	for fileName, r := range c.mappers {
+		if r.done {
+			continue
+		}
+
+		// 1. 短期内不允许重试
+		timeout := r.timeout
+		curTimestamp := time.Now().Unix()
+		if timeout > curTimestamp {
+			continue
+		}
+		r.timeout = curTimestamp + int64(time.Second*5)
+
+		reply.Command = 1
+		reply.MapFileName = fileName
+		reply.NReduce = c.nReduce
+		return nil
 	}
 
-	firstAddr := c.workers[0]
-	c.workers = c.workers[1:]
-	c.workers = append(c.workers, firstAddr)
-	log.Printf("apply workers: %v", firstAddr)
-	return firstAddr
+	// 2. reducer 任务分发
+	shuffles := c.getAllShuffles()
+	for idx, rr := range c.reducers {
+		if rr.done {
+			continue
+		}
+
+		// 防止重试
+		timeout := rr.timeout
+		curTimestamp := time.Now().Unix()
+		if timeout > curTimestamp {
+			continue
+		}
+		rr.timeout = curTimestamp + int64(time.Second*5)
+
+		reply.Command = 2
+		reply.ReduceIdx = idx
+		reply.Shuffles = shuffles
+		return nil
+	}
+
+	if c.ret {
+		reply.Command = -1
+	}
+
+	return nil
 }
 
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-
-func CallMapReq(workerAddr, fileName string, nReduce int) (string, bool) {
-	args := MapReqArgs{FileName: fileName, NReduce: nReduce}
-	reply := MapReqReply{}
-	log.Printf("Map调用 addr:%s, args:%v \n", workerAddr, args)
-	ok := callWorker(workerAddr, "WorkerInfo.MapReq", &args, &reply)
-	if ok && reply.Success {
-		return reply.Shuffle, true
-	}
-	log.Printf("Map调用失败 addr:%s, args:%v \n", workerAddr, args)
-	return "", false
-}
-
-func CallReduceReq(workerAddr string, hashI int, shuffles []string) bool {
-	args := ReduceReqArgs{hashI, shuffles}
-	reply := ReduceReqReply{}
-	log.Printf("Reduce调用 addr:%s, args:%v \n", workerAddr, args)
-	ok := callWorker(workerAddr, "WorkerInfo.ReduceReq", &args, &reply)
-	log.Printf("Reduce调用结果 addr:%s, args:%v, reply:%v \n", workerAddr, args, reply)
-	if ok && reply.Success {
-		return true
-	}
-	log.Printf("Reduce调用失败 addr:%s, args:%v \n", workerAddr, args)
-	return false
-}
-
-func callWorker(workerAddr, rpcName string, args interface{}, reply interface{}) bool {
-	defer func() {
-		anyError := recover()
-		if anyError != nil {
-			log.Printf("call workers error:%v", anyError)
-		}
-	}()
-
-	c, err := rpc.DialHTTP("tcp", workerAddr)
-	// sockname := coordinatorSock()
-	// c, err := rpc.DialHTTP("unix", sockname)
-	if err != nil {
-		log.Printf("dialing:", err)
-		return false
-	}
-
-	err = c.Call(rpcName, args, reply)
-
-	closeErr := c.Close()
-	if closeErr != nil {
-		log.Printf("workers: %s close error:%v", workerAddr, closeErr)
-		return false
-	}
-
-	if err == nil {
-		return true
-	}
-
-	log.Printf("call rpc error:%v", err.Error())
-	return false
-}

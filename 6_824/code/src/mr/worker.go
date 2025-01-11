@@ -36,7 +36,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	// 2. 向server注册
 	go func() {
 		for {
-			CallRegister(worker.name)
+			//CallRegister(worker.name)
+			worker.MapReduce()
 			time.Sleep(1 * time.Second)
 		}
 	}()
@@ -54,27 +55,6 @@ type WorkerInfo struct {
 	reducef func(string, []string) string
 	working bool
 	lock    *sync.Mutex
-}
-
-func (w *WorkerInfo) MapReq(args *MapReqArgs, reply *MapReqReply) error {
-	defer func() {
-		anyError := recover()
-		if anyError != nil {
-			log.Printf("WorkerInfo.MapReq error:%v\n", anyError)
-		}
-	}()
-	w.apply()
-	defer w.release()
-
-	log.Printf("WorkerInfo.MapReq(%v)\n", args)
-
-	// 1. 读取file
-	fileName := args.FileName
-	shuffleFilePrefix := w.DoMap(fileName, args.NReduce)
-
-	reply.Shuffle = shuffleFilePrefix
-	reply.Success = true
-	return nil
 }
 
 func (w *WorkerInfo) apply() bool {
@@ -108,32 +88,24 @@ func CreateShuffleFile(fileName string, kvs []KeyValue) {
 	defer file.Close()
 
 	// 2. 追加内容
+	sb := strings.Builder{}
 	for _, kv := range kvs {
 		// todo 这个可能会遇到key或value中存在空格的数据
-		_, err := fmt.Fprintf(file, "%s %s\n", kv.Key, kv.Value)
-		if err != nil {
-			continue
-		}
+		kvs := fmt.Sprintf("%s %s\n", kv.Key, kv.Value)
+		sb.WriteString(kvs)
 	}
+	_, err = fmt.Fprintf(file, sb.String())
+	if err != nil {
+		log.Fatalf("Shuffle file err:%v", err)
+	}
+
 }
 
-func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error {
-	defer func() {
-		anyError := recover()
-		if anyError != nil {
-			log.Printf("WorkerInfo.ReduceReq error:%v\n", anyError)
-		}
-	}()
-	w.apply()
-	defer w.release()
-
-	log.Printf("WorkerInfo.ReduceReq(%v)\n", args)
+func (w *WorkerInfo) DoReduce(hashI int, shuffles []string) string {
 	// 1. 将文件读入内存中
-	shuffles := make([]string, 0)
-	hashi := args.HashI
-	for _, shufflePrefix := range args.Shuffles {
-		shuffle := shufflePrefix + strconv.Itoa(hashi)
-		shuffles = append(shuffles, shuffle)
+	for idx, shufflePrefix := range shuffles {
+		shuffle := shufflePrefix + strconv.Itoa(hashI)
+		shuffles[idx] = shuffle
 	}
 
 	shuffleMaps := make(map[string][]string, 0)
@@ -154,17 +126,18 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 	}
 
 	// 2. 调用reducer
-	reduceOutPut := "mr-out-" + strconv.Itoa(hashi)
+	reduceOutPut := "mr-out-" + strconv.Itoa(hashI)
 	file, _ := os.Create(reduceOutPut)
+	sb := strings.Builder{}
 	for reduceKey, reduceValues := range shuffleMaps {
 		reduceResult := w.reducef(reduceKey, reduceValues)
-		fmt.Fprintf(file, "%s %s\n", reduceKey, reduceResult)
+		sb.WriteString(fmt.Sprintf("%s %s\n", reduceKey, reduceResult))
 	}
-
-	reply.Success = true
-	reply.HashI = hashi
-	reply.OutPutFile = reduceOutPut
-	return nil
+	_, err := fmt.Fprintf(file, sb.String())
+	if err != nil {
+		log.Fatalf("Reduce file err:%v", err)
+	}
+	return reduceOutPut
 }
 
 /**
@@ -173,7 +146,6 @@ func (w *WorkerInfo) ReduceReq(args *ReduceReqArgs, reply *ReduceReqReply) error
 func ReadFile(fileName string) (string, error) {
 	contentByte, err := os.ReadFile(fileName)
 	if err != nil {
-		log.Printf("worker读取fileName失败。 fileName:%s, err:%v \n", fileName, err)
 		return "", err
 	}
 
@@ -197,13 +169,14 @@ func (w *WorkerInfo) MapReduce() {
 			log.Printf("worker退出\n")
 			os.Exit(0)
 		case 0:
-			log.Printf("worker空闲\n")
 			time.Sleep(1 * time.Second)
 		case 1:
 			shuffles := w.DoMap(taskReply.MapFileName, taskReply.NReduce)
-			CallMapDone(shuffles)
+			CallMapDone(taskReply.MapFileName, shuffles)
 			log.Printf("worker开始Map\n")
 		case 2:
+			output := w.DoReduce(taskReply.ReduceIdx, taskReply.Shuffles)
+			CallReduceDone(taskReply.ReduceIdx, output)
 			log.Printf("worker开始Reduce\n")
 		default:
 			log.Fatalf("异常命令\n")
@@ -211,7 +184,22 @@ func (w *WorkerInfo) MapReduce() {
 	}
 }
 
-func CallMapDone(shuffles string) {
+func CallReduceDone(idx int, output string) {
+	args := ReduceDoneArgs{idx, true}
+	reply := ReduceDoneReply{}
+	success := call("Coordinator.ReduceDone", &args, &reply)
+	if !success || !reply.Success {
+		log.Fatalf("Coordinator.ReduceDone FAIL:%v\n", reply)
+	}
+}
+
+func CallMapDone(fileName, shuffles string) {
+	args := MapDoneArgs{FileName: fileName, Shuffles: shuffles}
+	reply := MapDoneReply{}
+	success := call("Coordinator.MapDone", &args, &reply)
+	if !success || !reply.Success {
+		log.Fatalf("Coordinator.MapDone FAIL:%v\n", reply)
+	}
 
 }
 
@@ -236,7 +224,7 @@ func (w *WorkerInfo) DoMap(fileName string, nReduce int) string {
 		groupKVs[hashI] = append(groupKVs[hashI], kv)
 	}
 	// todo shuffle的文件生成方式可能会hash碰撞
-	shuffleFilePrefix := "map_out_" + strconv.Itoa(ihash(fileName)) + "_"
+	shuffleFilePrefix := "map_out_" + strconv.FormatInt(time.Now().Unix(), 10) + "_" + strconv.Itoa(ihash(fileName)) + "_"
 	for idx, kvs := range groupKVs {
 		if len(kvs) == 0 {
 			continue
@@ -257,24 +245,7 @@ func CallApplyTask() *ApplyTaskReply {
 		log.Printf("reply fail:%v \n", reply)
 		return &ApplyTaskReply{Command: 0}
 	}
-	log.Printf("reply:%v \n", reply)
 	return &reply
-}
-
-func CallRegister(addr string) {
-	// declare an argument structure.
-	args := RegisterArgs{}
-
-	// fill in the argument(s).
-	args.Msg = addr
-
-	// declare a reply structure.
-	reply := RegisterReply{}
-
-	// send the RPC request, wait for the reply.
-	call("Coordinator.Register", &args, &reply)
-
-	log.Printf("reply:%v \n", reply)
 }
 
 // send an RPC request to the coordinator, wait for the response.
